@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Datos capturados (no versionar datasets locales por defecto)
+*.csv
+!ejemplo*.csv
+
+# Modelo generado
+clasificador_generado.h
+
+# Arduino build
+build/
+*.hex
+*.bin
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Credenciales (evita subir config.h con secretos reales)
+# Descomenta si prefieres NO versionar config.h:
+# firmware_diagnostico/config.h

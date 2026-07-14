@@ -1,0 +1,25 @@
+{
+  "rules": {
+    ".read": true,
+    ".write": true,
+
+    "_comentario": "PROTOTIPO: read/write abiertos. Para produccion usa Auth y restringe por uid. Ejemplo de reglas mas seguras abajo (comentadas conceptualmente).",
+
+    "comando": {
+      ".validate": "newData.isString() && (newData.val() == 'MEDIR' || newData.val() == 'ESPERA')"
+    },
+    "config": {
+      "fruta":  { ".validate": "newData.isString()" },
+      "estado": { ".validate": "newData.isString()" }
+    },
+    "mediciones": {
+      "$id": {
+        "fruta":       { ".validate": "newData.isString()" },
+        "estado":      { ".validate": "newData.isString()" },
+        "diagnostico": { ".validate": "newData.isString()" },
+        "t_ms":        { ".validate": "newData.isNumber()" },
+        "bandas":      { ".validate": "newData.hasChildren()" }
+      }
+    }
+  }
+}
