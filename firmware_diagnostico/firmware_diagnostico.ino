@@ -28,6 +28,11 @@
 #include <SparkFun_AS7265X.h>
 #include <TFT_eSPI.h>
 
+// Diagnostico de arranque: motivo de reinicio + desactivar brownout
+#include "esp_system.h"
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+
 #include "config.h"
 #include "clasificador.h"
 #include "pantalla.h"
@@ -437,28 +442,57 @@ void manejarSerial() {
 }
 
 // ---------------------------------------------------------------------------
+//  DIAGNOSTICO DE ARRANQUE
+// ---------------------------------------------------------------------------
+const char* motivoReset(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:   return "Encendido normal (power-on)";
+    case ESP_RST_SW:        return "Reinicio por software";
+    case ESP_RST_PANIC:     return "PANIC / excepcion (crash de codigo)";
+    case ESP_RST_INT_WDT:   return "Watchdog de interrupciones";
+    case ESP_RST_TASK_WDT:  return "Watchdog de tarea (algo se bloqueo)";
+    case ESP_RST_WDT:       return "Watchdog generico";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT (caida de tension / alimentacion)";
+    case ESP_RST_DEEPSLEEP: return "Salida de deep sleep";
+    case ESP_RST_EXT:       return "Reset externo (boton)";
+    default:                return "Desconocido";
+  }
+}
+
+// ---------------------------------------------------------------------------
 //  SETUP / LOOP
 // ---------------------------------------------------------------------------
 void setup() {
+  // Desactiva el detector de brownout ANTES de nada. Evita reinicios por los
+  // picos de corriente del bulbo del sensor o de la radio WiFi cuando la
+  // alimentacion USB es debil (causa muy comun de "se reinicia solo").
+  WRITE_PERI_REG(RTC_CNTL_BROWNOUT_REG, 0);
+
   Serial.begin(115200);
-  delay(200);
+  delay(300);
+  Serial.printf("\n\n[BOOT] GENIC arrancando...\n[BOOT] Motivo del ultimo reinicio: %s\n",
+                motivoReset(esp_reset_reason()));
 
   // Retroiluminacion del TFT
   pinMode(PIN_TFT_BL, OUTPUT);
   digitalWrite(PIN_TFT_BL, HIGH);
 
   // Pantalla
+  Serial.println(F("[BOOT] Iniciando TFT..."));
   tft.init();
   tft.setRotation(1);          // horizontal 240x135
   tft.fillScreen(TFT_BLACK);
+  Serial.println(F("[BOOT] TFT OK."));
 
   // Botones
   pinMode(PIN_BTN1, INPUT_PULLUP);
   pinMode(PIN_BTN2, INPUT);     // GPIO35 es input-only (pull-up en la placa)
 
   // I2C + sensor
+  Serial.println(F("[BOOT] Iniciando I2C + AS7265x..."));
   Wire.begin(PIN_SDA, PIN_SCL, I2C_FREQ_HZ);
   sensorOk = iniciarSensor();
+  Serial.printf("[BOOT] Sensor: %s\n", sensorOk ? "OK" : "NO detectado (se continua)");
   if (!sensorOk) {
     tft.fillScreen(TFT_BLACK);
     tft.setTextDatum(MC_DATUM);
