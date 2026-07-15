@@ -466,7 +466,13 @@ void setup() {
   // Desactiva el detector de brownout ANTES de nada. Evita reinicios por los
   // picos de corriente del bulbo del sensor o de la radio WiFi cuando la
   // alimentacion USB es debil (causa muy comun de "se reinicia solo").
+  // El nombre del registro cambia segun la version del core ESP32:
+  //   ESP32 clasico (2.0.x) -> RTC_CNTL_BROWN_OUT_REG
+#if defined(RTC_CNTL_BROWN_OUT_REG)
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+#elif defined(RTC_CNTL_BROWNOUT_REG)
   WRITE_PERI_REG(RTC_CNTL_BROWNOUT_REG, 0);
+#endif
 
   Serial.begin(115200);
   delay(300);
