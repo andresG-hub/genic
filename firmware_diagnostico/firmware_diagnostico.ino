@@ -1,21 +1,22 @@
 // ============================================================================
 //  firmware_diagnostico.ino
-//  Sistema de diagnostico de patogenos en frutas
-//  ESP32-S3 + AS7265x (18 bandas) + OLED SSD1306 + WebServer + Firebase RTDB
+//  Sistema de diagnostico de patogenos en frutas  -  proyecto GENIC
+//  PLACA: LilyGO T-Display (ESP32 + ST7789 1.14" 240x135)
+//  Sensor: AS7265x (18 bandas) | WiFi + WebServer + Firebase RTDB
 // ----------------------------------------------------------------------------
-//  MENU SERIAL:
-//    1 -> MODO DIAGNOSTICO   (offline: mide, clasifica, muestra en OLED/Serial)
-//    2 -> MODO ENTRENAMIENTO (web local + Firebase para capturar dataset)
-//    M -> (en cualquier modo) toma una medicion y emite el JSON por Serial,
-//         compatible con tu colector_espectral.py
-//    h -> ayuda / menu
-//    x -> volver al menu principal
+//  NAVEGACION POR BOTONES (HMI en pantalla):
+//    BTN1 (GPIO0)  -> Mover seleccion / Volver
+//    BTN2 (GPIO35) -> Seleccionar / MEDIR
 //
-//  Requiere (Library Manager):
+//  ATAJOS SERIE (115200):
+//    1=Diagnostico  2=Entrenamiento  i=Info  x=Menu  m=Medir  h=Ayuda
+//    M -> emite JSON por Serial compatible con colector_espectral.py
+//
+//  LIBRERIAS (Library Manager):
 //    - SparkFun AS7265X Arduino Library
-//    - ArduinoJson  (>= 7.x)
-//    - Adafruit SSD1306 + Adafruit GFX   (si USE_OLED)
-//  Placa: "ESP32S3 Dev Module"
+//    - ArduinoJson (>= 7.x)
+//    - TFT_eSPI  (configurada para T-Display: ver CONEXIONES.md)
+//  Placa: "ESP32 Dev Module" (o "TTGO LoRa32-OLED" NO; usar ESP32 Dev Module)
 // ============================================================================
 
 #include <Wire.h>
@@ -25,65 +26,58 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <SparkFun_AS7265X.h>
+#include <TFT_eSPI.h>
 
 #include "config.h"
 #include "clasificador.h"
+#include "pantalla.h"
 #include "pagina_web.h"
 
-#ifdef USE_OLED
-  #include <Adafruit_GFX.h>
-  #include <Adafruit_SSD1306.h>
-  Adafruit_SSD1306 oled(OLED_ANCHO, OLED_ALTO, &Wire, -1);
-  bool oledOk = false;
-#endif
-
 // ---------------------------------------------------------------------------
-//  Estado global
+//  Objetos globales
 // ---------------------------------------------------------------------------
-AS7265X    as7265x;
-WebServer  server(WEB_PORT);
+AS7265X   as7265x;
+TFT_eSPI  tft = TFT_eSPI();
+WebServer server(WEB_PORT);
 
-enum Modo { MENU, DIAGNOSTICO, ENTRENAMIENTO };
-Modo   modoActual = MENU;
+// Estados de la HMI
+enum Estado { SPLASH, MENU, DIAG_PROMPT, DIAG_RESULT, TRAIN, INFO };
+Estado estado = SPLASH;
 
-bool   sensorOk   = false;
-bool   webActiva  = false;
-String cfgFruta   = "fresa";
-String cfgEstado  = ESTADO_SANA;
+int    menuSel   = 0;
+bool   sensorOk  = false;
+bool   webActiva = false;
+String cfgFruta  = "fresa";
+String cfgEstado = ESTADO_SANA;
+String ipActual  = "";
 
-float  bandas[NUM_BANDAS];
-uint32_t contador = 0;
+float       bandas[NUM_BANDAS];
+Diagnostico ultimoDiag = DESCONOCIDO;
+Features    ultimasFeat;
+uint32_t    contador = 0;
+
+unsigned long splashT     = 0;
 unsigned long ultimoPollFb = 0;
 
-// ---------------------------------------------------------------------------
-//  Utilidades OLED
-// ---------------------------------------------------------------------------
-void oledMensaje(const String& l1, const String& l2 = "", const String& l3 = "") {
-#ifdef USE_OLED
-  if (!oledOk) return;
-  oled.clearDisplay();
-  oled.setTextColor(SSD1306_WHITE);
-  oled.setTextSize(1);
-  oled.setCursor(0, 0);  oled.println(l1);
-  oled.setCursor(0, 20); oled.println(l2);
-  oled.setCursor(0, 40); oled.println(l3);
-  oled.display();
-#endif
-}
+// Botones (activos en LOW por pull-up)
+bool     b1Prev = HIGH, b2Prev = HIGH;
+uint32_t b1t = 0, b2t = 0;
 
-void oledDiagnostico(Diagnostico d, const String& fruta) {
-#ifdef USE_OLED
-  if (!oledOk) return;
-  oled.clearDisplay();
-  oled.setTextColor(SSD1306_WHITE);
-  oled.setTextSize(1);
-  oled.setCursor(0, 0);
-  oled.print("Fruta: "); oled.println(fruta);
-  oled.setTextSize(2);
-  oled.setCursor(0, 26);
-  oled.println(DIAG_NOMBRE[d]);
-  oled.display();
-#endif
+// ---------------------------------------------------------------------------
+//  Utilidades comunes
+// ---------------------------------------------------------------------------
+bool wifiConectado() { return WiFi.status() == WL_CONNECTED; }
+bool wifiActivo()    { return wifiConectado() || (WIFI_MODO == WIFI_MODO_AP && webActiva); }
+bool firebaseOn()    { return (USAR_FIREBASE == 1) && wifiConectado(); }
+
+String siguienteId() { return "m" + String(millis()) + "_" + String(contador++); }
+
+bool leerBotonFlanco(uint8_t pin, bool& prev, uint32_t& t) {
+  bool now = digitalRead(pin);
+  bool pulsado = false;
+  if (prev == HIGH && now == LOW && millis() - t > 180) { pulsado = true; t = millis(); }
+  prev = now;
+  return pulsado;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,21 +85,20 @@ void oledDiagnostico(Diagnostico d, const String& fruta) {
 // ---------------------------------------------------------------------------
 bool iniciarSensor() {
   if (!as7265x.begin()) {
-    Serial.println(F("[ERROR] AS7265x no detectado en I2C. Revisa SDA=8 SCL=9."));
+    Serial.println(F("[ERROR] AS7265x no detectado. Revisa I2C SDA=21 SCL=22."));
     return false;
   }
   as7265x.setGain(AS_GAIN);
   as7265x.setMeasurementMode(AS_MODE);
   as7265x.setIntegrationCycles(AS_INT_TIME);
   as7265x.setBulbCurrent(AS_BULB_CURRENT, AS7265x_LED_WHITE);
-  as7265x.disableBulb(AS7265x_LED_WHITE);   // se enciende solo durante la medicion
+  as7265x.disableBulb(AS7265x_LED_WHITE);
   Serial.println(F("[OK] AS7265x inicializado."));
   return true;
 }
 
-// Lee las 18 bandas EN ORDEN por longitud de onda (ver clasificador.h)
 void leerBandas(float* b) {
-  as7265x.takeMeasurementsWithBulb();   // enciende bulbo, integra, apaga
+  as7265x.takeMeasurementsWithBulb();
   b[0]  = as7265x.getCalibratedA();  // 410
   b[1]  = as7265x.getCalibratedB();  // 435
   b[2]  = as7265x.getCalibratedC();  // 460
@@ -126,21 +119,15 @@ void leerBandas(float* b) {
   b[17] = as7265x.getCalibratedL();  // 940
 }
 
-String siguienteId() {
-  return "m" + String(millis()) + "_" + String(contador++);
-}
-
 // ---------------------------------------------------------------------------
-//  Construccion de JSON
+//  JSON
 // ---------------------------------------------------------------------------
-// JSON completo (3 grupos UV/VIS/NIR) - para Serial y web
 void construirDoc(JsonDocument& doc, const float* b, const String& id, bool conDiag) {
   doc["id"]     = id;
   doc["fruta"]  = cfgFruta;
   doc["estado"] = cfgEstado;
   doc["t_ms"]   = millis();
   if (conDiag) doc["diagnostico"] = DIAG_NOMBRE[clasificar(b)];
-
   JsonObject uv = doc["UV"].to<JsonObject>();
   for (int i = 0; i < 6; i++)   uv[String(WAVELENGTHS[i])]  = b[i];
   JsonObject vis = doc["VIS"].to<JsonObject>();
@@ -149,7 +136,6 @@ void construirDoc(JsonDocument& doc, const float* b, const String& id, bool conD
   for (int i = 12; i < 18; i++) nir[String(WAVELENGTHS[i])] = b[i];
 }
 
-// JSON plano para Firebase (fruta, estado, diagnostico + bandas{nm:valor})
 void construirDocFirebase(JsonDocument& doc, const float* b) {
   doc["fruta"]       = cfgFruta;
   doc["estado"]      = cfgEstado;
@@ -159,7 +145,6 @@ void construirDocFirebase(JsonDocument& doc, const float* b) {
   for (int i = 0; i < NUM_BANDAS; i++) bb[String(WAVELENGTHS[i])] = b[i];
 }
 
-// Mide y emite JSON por Serial (compatible con colector_espectral.py)
 void medirYEnviarSerial() {
   if (!sensorOk) { Serial.println(F("{\"error\":\"sensor no disponible\"}")); return; }
   leerBandas(bandas);
@@ -170,18 +155,19 @@ void medirYEnviarSerial() {
 }
 
 // ---------------------------------------------------------------------------
-//  FIREBASE (REST API sobre HTTPS)
+//  FIREBASE (REST) - auth opcional (reglas abiertas => sin ?auth=)
 // ---------------------------------------------------------------------------
 #if USAR_FIREBASE
 String fbUrl(const String& path) {
-  return String(FB_HOST) + path + ".json?auth=" + FB_AUTH;
+  String u = String(FB_HOST) + path + ".json";
+  if (strlen(FB_AUTH) > 0) u += String("?auth=") + FB_AUTH;
+  return u;
 }
 
-// method: "GET" | "PUT" | "POST" | "PATCH". Devuelve codigo HTTP; resp = cuerpo.
 int fbSend(const char* method, const String& path, const String& body, String& resp) {
   if (WiFi.status() != WL_CONNECTED) return -1;
   WiFiClientSecure client;
-  client.setInsecure();              // prototipo: sin verificar certificado
+  client.setInsecure();
   HTTPClient http;
   if (!http.begin(client, fbUrl(path))) return -2;
   http.addHeader("Content-Type", "application/json");
@@ -195,7 +181,6 @@ int fbSend(const char* method, const String& path, const String& body, String& r
   return code;
 }
 
-// Lee /config/{fruta,estado} desde Firebase y actualiza la config local
 void fbLeerConfigRemota() {
   String resp;
   if (fbSend("GET", "/config", "", resp) == 200 && resp.length() > 2) {
@@ -207,7 +192,6 @@ void fbLeerConfigRemota() {
   }
 }
 
-// Publica una medicion en /mediciones (push) y devuelve el id generado
 String fbPublicarMedicion(const float* b) {
   JsonDocument doc; construirDocFirebase(doc, b);
   String body; serializeJson(doc, body);
@@ -222,42 +206,36 @@ String fbPublicarMedicion(const float* b) {
   return "";
 }
 
-// Escucha el nodo /comando; si dice "MEDIR" ejecuta la captura y resetea a "ESPERA"
+void fbInicializar() {
+  String r;
+  fbSend("PUT", "/comando", "\"ESPERA\"", r);
+  Serial.println(F("[FB] /comando inicializado en ESPERA."));
+}
+
+// Escucha /comando; si es "MEDIR" mide, publica y resetea a "ESPERA"
 void fbPoll() {
   if (millis() - ultimoPollFb < FB_POLL_INTERVAL) return;
   ultimoPollFb = millis();
-
   String resp;
-  int code = fbSend("GET", "/comando", "", resp);
-  if (code != 200) return;
+  if (fbSend("GET", "/comando", "", resp) != 200) return;
   resp.trim();
   if (resp == "\"MEDIR\"") {
     Serial.println(F("[FB] Comando MEDIR recibido."));
-    oledMensaje("Firebase:", "Midiendo...");
-    fbLeerConfigRemota();                 // usa fruta/estado que puso la app movil
+    fbLeerConfigRemota();
     leerBandas(bandas);
+    ultimoDiag  = clasificar(bandas);
+    ultimasFeat = calcularFeatures(bandas);
     String id = fbPublicarMedicion(bandas);
-    String r;
-    fbSend("PUT", "/comando", "\"ESPERA\"", r);   // resetea el comando
-    Diagnostico d = clasificar(bandas);
-    oledDiagnostico(d, cfgFruta);
-    Serial.printf("[FB] Medicion publicada id=%s  fruta=%s estado=%s diag=%s\n",
-                  id.c_str(), cfgFruta.c_str(), cfgEstado.c_str(), DIAG_NOMBRE[d]);
+    String r; fbSend("PUT", "/comando", "\"ESPERA\"", r);
+    Serial.printf("[FB] Publicada id=%s diag=%s\n", id.c_str(), DIAG_NOMBRE[ultimoDiag]);
+    if (estado == TRAIN) uiEntrenamiento(tft, ipActual, wifiActivo(), firebaseOn(), cfgFruta, cfgEstado);
   }
-}
-
-void fbInicializar() {
-  String r;
-  fbSend("PUT", "/comando", "\"ESPERA\"", r);   // deja el comando en reposo
-  Serial.println(F("[FB] Nodo /comando inicializado en ESPERA."));
 }
 #endif // USAR_FIREBASE
 
 // ---------------------------------------------------------------------------
 //  WIFI
 // ---------------------------------------------------------------------------
-bool wifiConectado() { return WiFi.status() == WL_CONNECTED; }
-
 String iniciarWiFi() {
 #if WIFI_MODO == WIFI_MODO_AP
   WiFi.mode(WIFI_AP);
@@ -270,15 +248,13 @@ String iniciarWiFi() {
   WiFi.begin(STA_SSID, STA_PASSWORD);
   Serial.print(F("[WiFi] Conectando"));
   unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
-    delay(400); Serial.print('.');
-  }
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) { delay(400); Serial.print('.'); }
   Serial.println();
   if (wifiConectado()) {
-    Serial.printf("[WiFi] STA conectado -> http://%s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("[WiFi] STA -> http://%s\n", WiFi.localIP().toString().c_str());
     return WiFi.localIP().toString();
   }
-  Serial.println(F("[WiFi] No se pudo conectar (la web local puede no estar disponible)."));
+  Serial.println(F("[WiFi] Sin conexion."));
   return "";
 #endif
 }
@@ -286,17 +262,14 @@ String iniciarWiFi() {
 // ---------------------------------------------------------------------------
 //  ENDPOINTS WEB
 // ---------------------------------------------------------------------------
-void handleRoot() {
-  server.send_P(200, "text/html", PAGINA_HTML);
-}
+void handleRoot()   { server.send_P(200, "text/html", PAGINA_HTML); }
 
 void handleEstado() {
   JsonDocument doc;
   doc["sensor_ok"]   = sensorOk;
-  doc["wifi_ok"]     = wifiConectado() || (WIFI_MODO == WIFI_MODO_AP);
-  doc["ip"]          = (WIFI_MODO == WIFI_MODO_AP) ? WiFi.softAPIP().toString()
-                                                   : WiFi.localIP().toString();
-  doc["firebase_ok"] = (USAR_FIREBASE == 1);
+  doc["wifi_ok"]     = wifiActivo();
+  doc["ip"]          = ipActual;
+  doc["firebase_ok"] = firebaseOn();
   doc["fruta"]       = cfgFruta;
   doc["estado"]      = cfgEstado;
   String out; serializeJson(doc, out);
@@ -308,26 +281,27 @@ void handleConfig() {
   if (server.hasArg("estado")) cfgEstado = server.arg("estado");
   Serial.printf("[WEB] Config: fruta=%s estado=%s\n", cfgFruta.c_str(), cfgEstado.c_str());
 #if USAR_FIREBASE
-  // Refleja la config tambien en Firebase para que la app movil la vea
   JsonDocument doc; doc["fruta"] = cfgFruta; doc["estado"] = cfgEstado;
   String body; serializeJson(doc, body); String r;
   fbSend("PUT", "/config", body, r);
 #endif
+  if (estado == TRAIN) uiEntrenamiento(tft, ipActual, wifiActivo(), firebaseOn(), cfgFruta, cfgEstado);
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleMedir() {
   if (!sensorOk) { server.send(503, "application/json", "{\"error\":\"sensor\"}"); return; }
   leerBandas(bandas);
+  ultimoDiag  = clasificar(bandas);
+  ultimasFeat = calcularFeatures(bandas);
   JsonDocument doc;
   construirDoc(doc, bandas, siguienteId(), true);
   String out; serializeJson(doc, out);
   server.send(200, "application/json", out);
 #if USAR_FIREBASE
-  // Publica tambien en Firebase cuando se mide desde la web (opcional)
   fbPublicarMedicion(bandas);
 #endif
-  Serial.println(F("[WEB] Medicion realizada desde /medir"));
+  Serial.println(F("[WEB] Medicion desde /medir"));
 }
 
 void iniciarServidorWeb() {
@@ -342,95 +316,123 @@ void iniciarServidorWeb() {
 }
 
 // ---------------------------------------------------------------------------
-//  MENU / MODOS
+//  RENDER SEGUN ESTADO
 // ---------------------------------------------------------------------------
-void imprimirMenu() {
-  Serial.println();
-  Serial.println(F("========= DIAGNOSTICO ESPECTRAL DE FRUTAS ========="));
-  Serial.println(F("  1 -> MODO DIAGNOSTICO   (offline, clasifica en vivo)"));
-  Serial.println(F("  2 -> MODO ENTRENAMIENTO (web + Firebase, captura datos)"));
-  Serial.println(F("  M -> Medir y enviar JSON por Serial (colector Python)"));
-  Serial.println(F("  h -> Mostrar este menu     x -> Volver al menu"));
-  Serial.println(F("==================================================="));
-  Serial.print(F("Selecciona una opcion: "));
+void renderActual() {
+  switch (estado) {
+    case SPLASH:      uiSplash(tft); break;
+    case MENU:        uiMenu(tft, menuSel, wifiActivo()); break;
+    case DIAG_PROMPT: uiPromptMedir(tft, cfgFruta, wifiActivo()); break;
+    case DIAG_RESULT: uiResultado(tft, ultimoDiag, ultimasFeat, bandas, cfgFruta, wifiActivo()); break;
+    case TRAIN:       uiEntrenamiento(tft, ipActual, wifiActivo(), firebaseOn(), cfgFruta, cfgEstado); break;
+    case INFO:        uiInfo(tft, wifiActivo()); break;
+  }
 }
 
-void entrarDiagnostico() {
-  modoActual = DIAGNOSTICO;
-  Serial.println(F("\n[MODO 1] DIAGNOSTICO. Pulsa 'm' para medir, 'x' para salir."));
-  oledMensaje("MODO DIAGNOSTICO", "Pulsa 'm' para", "medir una fruta");
-}
+void cambiarEstado(Estado nuevo) { estado = nuevo; renderActual(); }
 
+// Realiza medicion + clasificacion y muestra el resultado
 void ejecutarDiagnostico() {
   if (!sensorOk) { Serial.println(F("Sensor no disponible.")); return; }
-  oledMensaje("Midiendo...", "manten la fruta", "sobre el sensor");
+  uiMidiendo(tft);
   leerBandas(bandas);
-  Diagnostico d = clasificar(bandas);
-  Features f = calcularFeatures(bandas);
-  Serial.println(F("\n----- RESULTADO -----"));
-  Serial.printf("Fruta   : %s\n", cfgFruta.c_str());
-  Serial.printf("Diag    : %s\n", DIAG_NOMBRE[d]);
-  Serial.printf("NDVI=%.3f ratioRG=%.3f pigmento=%.3f nirRatio=%.3f total=%.0f\n",
-                f.ndvi, f.ratioRG, f.pigmento, f.nirRatio, f.grisTotal);
-  Serial.println(F("---------------------"));
-  oledDiagnostico(d, cfgFruta);
+  ultimoDiag  = clasificar(bandas);
+  ultimasFeat = calcularFeatures(bandas);
+  Serial.printf("[DIAG] %s  NDVI=%.3f R/G=%.3f pig=%.3f total=%.0f\n",
+                DIAG_NOMBRE[ultimoDiag], ultimasFeat.ndvi, ultimasFeat.ratioRG,
+                ultimasFeat.pigmento, ultimasFeat.grisTotal);
+  cambiarEstado(DIAG_RESULT);
 }
 
 void entrarEntrenamiento() {
-  modoActual = ENTRENAMIENTO;
-  Serial.println(F("\n[MODO 2] ENTRENAMIENTO / CAPTURA."));
-  oledMensaje("MODO", "ENTRENAMIENTO", "Conectando WiFi...");
-  String ip = iniciarWiFi();
+  uiEntrenamiento(tft, "conectando...", false, false, cfgFruta, cfgEstado);
+  ipActual = iniciarWiFi();
   iniciarServidorWeb();
 #if USAR_FIREBASE
   if (wifiConectado()) fbInicializar();
 #endif
-  oledMensaje("Web lista:", ip.length() ? ip : String("modo AP"),
-              (USAR_FIREBASE ? "Firebase: ON" : "Firebase: OFF"));
-  Serial.println(F("Abre la IP en el navegador. 'x' para salir."));
+  cambiarEstado(TRAIN);
+  Serial.printf("[MODO 2] Web en http://%s  (x para salir)\n", ipActual.c_str());
 }
 
-void salirAlMenu() {
-  if (modoActual == ENTRENAMIENTO && webActiva) {
-    server.stop();
-    webActiva = false;
-    // Nota: se mantiene el WiFi por si vuelves a entrar rapido.
+void salirDeEntrenamiento() {
+  if (webActiva) { server.stop(); webActiva = false; }
+  cambiarEstado(MENU);
+}
+
+// ---------------------------------------------------------------------------
+//  MANEJO DE BOTONES POR ESTADO
+// ---------------------------------------------------------------------------
+void manejarBotones() {
+  bool b1 = leerBotonFlanco(PIN_BTN1, b1Prev, b1t);   // navegar / volver
+  bool b2 = leerBotonFlanco(PIN_BTN2, b2Prev, b2t);   // seleccionar / medir
+  if (!b1 && !b2) return;
+
+  switch (estado) {
+    case SPLASH:
+      cambiarEstado(MENU);
+      break;
+
+    case MENU:
+      if (b1) { menuSel = (menuSel + 1) % MENU_N; renderActual(); }
+      if (b2) {
+        if      (menuSel == 0) cambiarEstado(DIAG_PROMPT);
+        else if (menuSel == 1) entrarEntrenamiento();
+        else                   cambiarEstado(INFO);
+      }
+      break;
+
+    case DIAG_PROMPT:
+      if (b1) cambiarEstado(MENU);
+      if (b2) ejecutarDiagnostico();
+      break;
+
+    case DIAG_RESULT:
+      if (b1) cambiarEstado(MENU);
+      if (b2) ejecutarDiagnostico();
+      break;
+
+    case TRAIN:
+      if (b1) salirDeEntrenamiento();
+      if (b2) {                       // medicion local manual
+        uiMidiendo(tft);
+        leerBandas(bandas);
+        ultimoDiag  = clasificar(bandas);
+        ultimasFeat = calcularFeatures(bandas);
+#if USAR_FIREBASE
+        fbPublicarMedicion(bandas);
+#endif
+        uiResultado(tft, ultimoDiag, ultimasFeat, bandas, cfgFruta, wifiActivo());
+        delay(2200);
+        renderActual();
+      }
+      break;
+
+    case INFO:
+      if (b1) cambiarEstado(MENU);
+      break;
   }
-  modoActual = MENU;
-  oledMensaje("Menu principal", "1=Diagnostico", "2=Entrenamiento");
-  imprimirMenu();
 }
 
 // ---------------------------------------------------------------------------
-//  Manejo de entrada Serial
+//  ATAJOS SERIE
 // ---------------------------------------------------------------------------
-void procesarSerial() {
+void manejarSerial() {
   if (!Serial.available()) return;
   char c = Serial.read();
   if (c == '\n' || c == '\r' || c == ' ') return;
 
-  // 'M' mayuscula: siempre emite JSON por Serial (compatibilidad colector)
-  if (c == 'M') { medirYEnviarSerial(); return; }
-  if (c == 'h') { imprimirMenu(); return; }
-  if (c == 'x') { salirAlMenu(); return; }
-
-  switch (modoActual) {
-    case MENU:
-      if (c == '1') entrarDiagnostico();
-      else if (c == '2') entrarEntrenamiento();
-      else { Serial.printf("Opcion '%c' no valida.\n", c); imprimirMenu(); }
+  if (c == 'M') { medirYEnviarSerial(); return; }   // colector Python
+  switch (c) {
+    case '1': cambiarEstado(DIAG_PROMPT); break;
+    case '2': entrarEntrenamiento(); break;
+    case 'i': cambiarEstado(INFO); break;
+    case 'x': if (estado == TRAIN) salirDeEntrenamiento(); else cambiarEstado(MENU); break;
+    case 'm': if (estado == DIAG_PROMPT || estado == DIAG_RESULT) ejecutarDiagnostico(); break;
+    case 'h':
+      Serial.println(F("1=Diag 2=Train i=Info x=Menu m=Medir M=JSON-serial"));
       break;
-    case DIAGNOSTICO:
-      if (c == 'm') ejecutarDiagnostico();
-      break;
-    case ENTRENAMIENTO:
-      // La interaccion es por web/Firebase; 'm' fuerza una captura local
-      if (c == 'm') { leerBandas(bandas);
-#if USAR_FIREBASE
-        fbPublicarMedicion(bandas);
-#endif
-        Serial.println(F("[MODO 2] Medicion local publicada.")); }
-      break;
+    default: break;
   }
 }
 
@@ -439,26 +441,47 @@ void procesarSerial() {
 // ---------------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
-  delay(300);
+  delay(200);
+
+  // Retroiluminacion del TFT
+  pinMode(PIN_TFT_BL, OUTPUT);
+  digitalWrite(PIN_TFT_BL, HIGH);
+
+  // Pantalla
+  tft.init();
+  tft.setRotation(1);          // horizontal 240x135
+  tft.fillScreen(TFT_BLACK);
+
+  // Botones
+  pinMode(PIN_BTN1, INPUT_PULLUP);
+  pinMode(PIN_BTN2, INPUT);     // GPIO35 es input-only (pull-up en la placa)
+
+  // I2C + sensor
   Wire.begin(PIN_SDA, PIN_SCL, I2C_FREQ_HZ);
-
-#ifdef USE_OLED
-  oledOk = oled.begin(SSD1306_SWITCHCAPVCC, OLED_DIR_I2C);
-  if (oledOk) { oled.clearDisplay(); oled.display(); }
-  else Serial.println(F("[WARN] OLED SSD1306 no detectado."));
-#endif
-
-  oledMensaje("Iniciando...", "AS7265x", "");
   sensorOk = iniciarSensor();
+  if (!sensorOk) {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.drawString("Sensor AS7265x", SCR_W / 2, 55, 2);
+    tft.drawString("no detectado", SCR_W / 2, 75, 2);
+    delay(1500);
+  }
 
-  oledMensaje("Listo", "1=Diagnostico", "2=Entrenamiento");
-  imprimirMenu();
+  // Splash inicial
+  splashT = millis();
+  cambiarEstado(SPLASH);
+  Serial.println(F("GENIC listo. Botones: B1=navegar B2=seleccionar. 'h'=ayuda serie."));
 }
 
 void loop() {
-  procesarSerial();
+  // Salida automatica del splash
+  if (estado == SPLASH && millis() - splashT > 1800) cambiarEstado(MENU);
 
-  if (modoActual == ENTRENAMIENTO) {
+  manejarBotones();
+  manejarSerial();
+
+  if (estado == TRAIN) {
     if (webActiva) server.handleClient();
 #if USAR_FIREBASE
     if (wifiConectado()) fbPoll();

@@ -1,6 +1,6 @@
 // ============================================================================
 //  config.h  -  Configuracion global del sistema de diagnostico de patogenos
-//  ESP32-S3 + AS7265x (18 bandas, 410-940 nm)
+//  PLACA: LilyGO T-Display (ESP32 + ST7789 1.14" 240x135) + AS7265x (18 bandas)
 // ----------------------------------------------------------------------------
 //  Edita este archivo con tus credenciales antes de compilar.
 //  NO subas este archivo con credenciales reales a un repo publico.
@@ -9,18 +9,26 @@
 #define CONFIG_H
 
 // ---------------------------------------------------------------------------
-//  1) HARDWARE / PINES
+//  1) HARDWARE / PINES  (LilyGO T-Display)
 // ---------------------------------------------------------------------------
-// I2C compartido por el AS7265x y el OLED SSD1306
-#define PIN_SDA            8
-#define PIN_SCL            9
+//  El display ST7789 usa SPI en pines FIJOS de la placa. Esos pines se
+//  configuran EN LA LIBRERIA TFT_eSPI (ver CONEXIONES.md), no aqui:
+//     TFT_MOSI=19  TFT_SCLK=18  TFT_CS=5  TFT_DC=16  TFT_RST=23  TFT_BL=4
+//
+//  El AS7265x se conecta por I2C en los pines LIBRES 21/22.
+//  (En el ESP32 clasico NO uses 8/9: estan unidos a la memoria flash.)
+#define PIN_SDA            21
+#define PIN_SCL            22
 #define I2C_FREQ_HZ        100000UL   // el AS7265x es sensible; 100 kHz es seguro
 
-// OLED SSD1306 (opcional). Comenta la linea para desactivar el display.
-#define USE_OLED
-#define OLED_ANCHO         128
-#define OLED_ALTO          64
-#define OLED_DIR_I2C       0x3C       // 0x3C o 0x3D segun el modulo
+// Botones fisicos integrados de la T-Display
+//   BTN1 (GPIO 0)  -> NAVEGAR / VOLVER   (tiene pull-up interno)
+//   BTN2 (GPIO 35) -> SELECCIONAR / MEDIR (input-only, pull-up en placa)
+#define PIN_BTN1           0
+#define PIN_BTN2           35
+
+// Retroiluminacion del TFT (la controla TFT_eSPI via TFT_BL=4)
+#define PIN_TFT_BL         4
 
 // ---------------------------------------------------------------------------
 //  2) WIFI
@@ -44,19 +52,19 @@
 #define WEB_PORT           80
 
 // ---------------------------------------------------------------------------
-//  3) FIREBASE REALTIME DATABASE (REST API)
+//  3) FIREBASE REALTIME DATABASE (REST API)  -  proyecto: genic-76302
 // ---------------------------------------------------------------------------
 // Activa/desactiva Firebase. Si esta en 0, el Modo Entrenamiento funciona
 // solo con la web local (sin internet).
 #define USAR_FIREBASE      1
 
-// URL de tu Realtime Database SIN la barra final, ej:
-//   https://mi-proyecto-default-rtdb.firebaseio.com
-#define FB_HOST            "https://TU-PROYECTO-default-rtdb.firebaseio.com"
+// URL de tu Realtime Database SIN la barra final.
+#define FB_HOST            "https://genic-76302-default-rtdb.firebaseio.com"
 
-// Database secret (Configuracion > Cuentas de servicio > Secretos de BD)
-// o un idToken si usas Auth. Para prototipo se usa el secret legado.
-#define FB_AUTH            "TU_DATABASE_SECRET"
+// Autenticacion:
+//   - Si tus reglas estan abiertas (".read"/".write": true) deja "" (vacio).
+//   - Si usas seguridad, pon aqui el database secret o un idToken de Auth.
+#define FB_AUTH            ""
 
 // Cada cuanto (ms) el ESP32 consulta el nodo /comando en Firebase
 #define FB_POLL_INTERVAL   1500

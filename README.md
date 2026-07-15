@@ -1,9 +1,14 @@
-# Diagnóstico espectral de patógenos en frutas — ESP32-S3 + AS7265x
+# GENIC — Diagnóstico espectral de patógenos en frutas (LilyGO T-Display + AS7265x)
 
 Sistema de clasificación de estado sanitario de frutas (sana / botrytis /
 antracnosis / podrida) a partir de las **18 bandas espectrales** (410–940 nm)
 del sensor **SparkFun AS7265x**, con dos modos de trabajo: diagnóstico en tiempo
 real y captura de dataset controlada desde web local y/o app móvil vía Firebase.
+
+**Hardware:** placa **LilyGO T-Display** (ESP32 + pantalla ST7789 IPS 1.14"
+240×135, 2 botones). La HMI se navega con los botones físicos y muestra el
+resultado con un gráfico espectral en color. Ver **[CONEXIONES.md](CONEXIONES.md)**
+para el cableado del sensor y la configuración de la pantalla.
 
 ```
 ESP32  →  JSON Serial  →  Python (colector_espectral.py)  →  CSV
@@ -21,46 +26,60 @@ ESP32  →  JSON Serial  →  Python (colector_espectral.py)  →  CSV
 
 ```
 firmware_diagnostico/
-  firmware_diagnostico.ino   Firmware principal (menú, modos, WebServer, Firebase)
+  firmware_diagnostico.ino   Firmware principal (HMI, modos, WebServer, Firebase)
   config.h                   Credenciales, pines, parámetros (EDITAR ANTES DE COMPILAR)
   clasificador.h             Modelo embebido (árbol de decisión + tabla de umbrales)
+  pantalla.h                 Interfaz HMI para la pantalla TFT (TFT_eSPI)
   pagina_web.h               Interfaz web embebida (SPA en PROGMEM)
 firebase/
   reglas.json                Reglas de Realtime Database
   estructura_ejemplo.json    Estructura de datos de ejemplo
 python/
   export_arbol.py            Entrena y exporta tu árbol sklearn a C++
+CONEXIONES.md                Esquema de cableado + configuración de TFT_eSPI
 ```
 
 ---
 
-## 1) Firmware ESP32
+## 1) Firmware ESP32 (LilyGO T-Display)
 
 ### Librerías necesarias (Arduino Library Manager)
 - **SparkFun AS7265X Arduino Library**
 - **ArduinoJson** (≥ 7.x)
-- **Adafruit SSD1306** + **Adafruit GFX** (solo si usas OLED)
+- **TFT_eSPI** (Bodmer) — configurada para la T-Display (ver [CONEXIONES.md](CONEXIONES.md))
 
-Placa: **ESP32S3 Dev Module**. I2C compartido en **SDA=8 / SCL=9** (sensor + OLED).
+Placa: **ESP32 Dev Module**. Sensor por I2C en **SDA=21 / SCL=22**. La pantalla
+ST7789 y los botones (GPIO 0 y 35) son de la propia placa.
+
+> ⚠️ **Paso obligatorio:** activa el perfil de la T-Display en TFT_eSPI
+> (`Setup25_TTGO_T_Display`). Si no lo haces, la pantalla se queda en blanco.
+> Instrucciones en [CONEXIONES.md](CONEXIONES.md).
 
 ### Antes de compilar
 Edita `config.h`:
 - `WIFI_MODO` → `WIFI_MODO_STA` (router, necesario para Firebase) o `WIFI_MODO_AP` (sin internet).
 - `STA_SSID` / `STA_PASSWORD` o `AP_SSID` / `AP_PASSWORD`.
-- `USAR_FIREBASE`, `FB_HOST`, `FB_AUTH`.
-- Si no tienes OLED, comenta `#define USE_OLED`.
+- `USAR_FIREBASE`, `FB_HOST` (ya apunta a `genic-76302`), `FB_AUTH` (déjalo `""` si tus reglas están abiertas).
 
-### Menú Serial (115200 baudios)
-| Tecla | Acción |
-|-------|--------|
-| `1`   | **Modo Diagnóstico** (offline). En este modo, `m` mide y clasifica. |
-| `2`   | **Modo Entrenamiento** (levanta WiFi + web + Firebase). |
-| `M`   | Mide y emite el JSON por Serial — **compatible con `colector_espectral.py`**. |
-| `h`   | Muestra el menú. |
-| `x`   | Vuelve al menú principal. |
+### HMI — navegación por botones
+La pantalla muestra: **Splash → Menú** (Diagnóstico / Entrenamiento / Info).
 
-> El comando `M` sigue funcionando igual que en tu firmware actual, así que tu
-> pipeline Python → CSV no cambia.
+| Pantalla      | BTN1 (GPIO0)      | BTN2 (GPIO35)   |
+|---------------|-------------------|-----------------|
+| Menú          | Mover selección   | Elegir          |
+| Diagnóstico   | Volver            | **MEDIR**       |
+| Resultado     | Volver            | Medir de nuevo  |
+| Entrenamiento | Salir             | Medir local     |
+
+El **Resultado** muestra el diagnóstico en color (verde/violeta/naranja/rojo)
+más un **gráfico de las 18 bandas** (UV cian, VIS verde, NIR rojo) y las métricas
+NDVI / R-G / pigmento.
+
+### Atajos por Serial (115200 baudios)
+`1` diagnóstico · `2` entrenamiento · `i` info · `x` menú · `m` medir ·
+`h` ayuda · **`M` emite el JSON por Serial — compatible con `colector_espectral.py`**.
+
+> El comando `M` sigue funcionando igual, así que tu pipeline Python → CSV no cambia.
 
 ### JSON que emite el sensor
 ```json
@@ -97,16 +116,18 @@ La web funciona **sin internet** en modo AP; Firebase es opcional.
 
 ## 3) Firebase Realtime Database y app móvil
 
-### 3.1 Crear el proyecto
-1. En [Firebase Console](https://console.firebase.google.com) crea un proyecto.
-2. Build → **Realtime Database** → *Create Database* → modo de prueba.
-3. Copia la URL (`https://TU-PROYECTO-default-rtdb.firebaseio.com`) → `FB_HOST`.
-4. Configuración del proyecto → *Cuentas de servicio* → *Secretos de base de datos*
-   → copia el secret → `FB_AUTH`.
-5. Pega el contenido de `firebase/reglas.json` en la pestaña *Reglas*.
+### 3.1 Proyecto (ya configurado: `genic-76302`)
+- **databaseURL:** `https://genic-76302-default-rtdb.firebaseio.com` (ya está en `config.h`).
+- **Reglas:** actualmente abiertas (`.read`/`.write: true`), por lo que el ESP32
+  no necesita `auth` → `FB_AUTH` se deja `""` en `config.h`.
 
-> Las reglas del repo están abiertas para prototipar. Para producción, activa
-> **Authentication** y restringe `.read`/`.write` por `uid`.
+> ⚠️ Con reglas abiertas cualquiera con la URL puede leer/escribir. Sirve para
+> prototipar, pero **antes de exponerlo** activa **Authentication** y restringe
+> `.read`/`.write` por `uid` (y entonces pon un token/secret en `FB_AUTH`).
+>
+> Nota: el `apiKey` de la config web de Firebase **no es un secreto** (va en los
+> clientes; la seguridad la dan las reglas). El que nunca debe filtrarse es el
+> *database secret* / token de servidor.
 
 ### 3.2 Estructura de datos
 ```
@@ -133,7 +154,18 @@ La web funciona **sin internet** en modo AP; Firebase es opcional.
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onChildAdded, query, limitToLast } from "firebase/database";
 
-const app = initializeApp({ databaseURL: "https://TU-PROYECTO-default-rtdb.firebaseio.com" });
+// Config real del proyecto genic-76302
+const firebaseConfig = {
+  apiKey: "AIzaSyB1r3EcCmgLDwYv19v6T-ZxbhYbABtYlW4",
+  authDomain: "genic-76302.firebaseapp.com",
+  databaseURL: "https://genic-76302-default-rtdb.firebaseio.com",
+  projectId: "genic-76302",
+  storageBucket: "genic-76302.firebasestorage.app",
+  messagingSenderId: "331511723864",
+  appId: "1:331511723864:web:0cef3b3853da733bdb572d",
+  measurementId: "G-1YZH5JF8NW"
+};
+const app = initializeApp(firebaseConfig);
 const db  = getDatabase(app);
 
 // 1) Configurar fruta + estado
@@ -154,7 +186,7 @@ onChildAdded(query(ref(db, "mediciones"), limitToLast(1)), (snap) => {
 
 **Android (Kotlin):**
 ```kotlin
-val db = FirebaseDatabase.getInstance("https://TU-PROYECTO-default-rtdb.firebaseio.com")
+val db = FirebaseDatabase.getInstance("https://genic-76302-default-rtdb.firebaseio.com")
 
 fun configurar(fruta: String, estado: String) {
     db.getReference("config").setValue(mapOf("fruta" to fruta, "estado" to estado))
@@ -202,8 +234,18 @@ El ESP32 corre bien un árbol único o una tabla. Para RF/SVM tienes dos caminos
 ---
 
 ## Notas de hardware
+- Placa **LilyGO T-Display**; sensor AS7265x por I2C en **GPIO 21 (SDA) / 22 (SCL)**.
+  No uses 8/9 en el ESP32 clásico (van a la flash). Detalle en [CONEXIONES.md](CONEXIONES.md).
 - Mantén la fruta a distancia constante del sensor y usa siempre el bulbo
   (`takeMeasurementsWithBulb`) para que las mediciones sean comparables.
 - Las bandas se leen **calibradas** y en orden por longitud de onda; ese orden
   es idéntico en el CSV, en el firmware y en el script de export.
 - I2C a 100 kHz por estabilidad del AS7265x.
+
+## Pendiente / próximos pasos
+- **Firestore para dataset + modelos ML:** hoy el firmware publica cada medición
+  en **Realtime Database** (`/mediciones`), que encaja como canal en tiempo real.
+  Si quieres que el *dataset* y los *modelos* vivan en **Firestore** (como planteaste),
+  falta definir el esquema de colecciones. Recomendación: que una **Cloud Function**
+  copie cada nuevo `/mediciones/{id}` de RTDB a una colección de Firestore, dejando
+  al ESP32 simple. Comparte la estructura de Firestore y lo integramos.
