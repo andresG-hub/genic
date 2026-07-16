@@ -9,7 +9,7 @@
 //    BTN2 (GPIO35) -> Seleccionar / MEDIR
 //
 //  ATAJOS SERIE (115200):
-//    1=Diagnostico  2=Entrenamiento  i=Info  x=Menu  m=Medir  h=Ayuda
+//    1=Diagnostico  2=Entrenamiento  w=WiFi  i=Info  x=Menu  m=Medir  h=Ayuda
 //    M -> emite JSON por Serial compatible con colector_espectral.py
 //
 //  LIBRERIAS (Library Manager):
@@ -30,6 +30,7 @@
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
+#include <Preferences.h>
 
 // Diagnostico de arranque: motivo de reinicio + desactivar brownout
 #include "esp_system.h"
@@ -49,15 +50,23 @@ Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST)
 WebServer server(WEB_PORT);
 
 // Estados de la HMI
-enum Estado { SPLASH, MENU, DIAG_PROMPT, DIAG_RESULT, TRAIN, INFO };
+enum Estado { SPLASH, MENU, DIAG_PROMPT, DIAG_RESULT, TRAIN, INFO, WIFI_INFO, WIFI_PORTAL };
 Estado estado = SPLASH;
 
 int    menuSel   = 0;
 bool   sensorOk  = false;
 bool   webActiva = false;
+bool   rutasRegistradas = false;
+bool   portalActivo = false;    // true mientras el portal de config WiFi esta activo
+bool   apActivo     = false;    // true mientras hay un AP levantado (portal o fallback)
 String cfgFruta  = "fresa";
 String cfgEstado = ESTADO_SANA;
 String ipActual  = "";
+
+// Gestor WiFi
+Preferences prefs;
+String wifiSSID = "";
+String wifiPass = "";
 
 float       bandas[NUM_BANDAS];
 Diagnostico ultimoDiag = DESCONOCIDO;
@@ -75,7 +84,7 @@ uint32_t b1t = 0, b2t = 0;
 //  Utilidades comunes
 // ---------------------------------------------------------------------------
 bool wifiConectado() { return WiFi.status() == WL_CONNECTED; }
-bool wifiActivo()    { return wifiConectado() || (WIFI_MODO == WIFI_MODO_AP && webActiva); }
+bool wifiActivo()    { return wifiConectado() || apActivo; }
 bool firebaseOn()    { return (USAR_FIREBASE == 1) && wifiConectado(); }
 
 String siguienteId() { return "m" + String(millis()) + "_" + String(contador++); }
@@ -242,35 +251,67 @@ void fbPoll() {
 #endif // USAR_FIREBASE
 
 // ---------------------------------------------------------------------------
-//  WIFI
+//  WIFI  -  gestor con credenciales guardadas en NVS (Preferences)
 // ---------------------------------------------------------------------------
-String iniciarWiFi() {
-#if WIFI_MODO == WIFI_MODO_AP
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(AP_SSID, AP_PASSWORD);
-  IPAddress ip = WiFi.softAPIP();
-  Serial.printf("[WiFi] AP '%s' -> http://%s\n", AP_SSID, ip.toString().c_str());
-  return ip.toString();
-#else
+void cargarCredenciales() {
+  prefs.begin("genic", true);
+  wifiSSID = prefs.getString("ssid", "");
+  wifiPass = prefs.getString("pass", "");
+  prefs.end();
+  // Fallback a lo definido en config.h si no hay nada guardado
+  if (wifiSSID.length() == 0 && String(STA_SSID) != "TU_SSID") {
+    wifiSSID = STA_SSID;
+    wifiPass = STA_PASSWORD;
+  }
+}
+
+void guardarCredenciales(const String& s, const String& p) {
+  prefs.begin("genic", false);
+  prefs.putString("ssid", s);
+  prefs.putString("pass", p);
+  prefs.end();
+  wifiSSID = s;
+  wifiPass = p;
+  Serial.printf("[WiFi] Credenciales guardadas para '%s'\n", s.c_str());
+}
+
+bool conectarSTA(uint32_t timeoutMs) {
+  if (wifiSSID.length() == 0) return false;
   WiFi.mode(WIFI_STA);
-  WiFi.begin(STA_SSID, STA_PASSWORD);
-  Serial.print(F("[WiFi] Conectando"));
+  WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
+  Serial.printf("[WiFi] Conectando a '%s'", wifiSSID.c_str());
   unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) { delay(400); Serial.print('.'); }
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < timeoutMs) { delay(300); Serial.print('.'); }
   Serial.println();
   if (wifiConectado()) {
-    Serial.printf("[WiFi] STA -> http://%s\n", WiFi.localIP().toString().c_str());
-    return WiFi.localIP().toString();
+    ipActual = WiFi.localIP().toString();
+    Serial.printf("[WiFi] Conectado -> %s\n", ipActual.c_str());
+    return true;
   }
   Serial.println(F("[WiFi] Sin conexion."));
-  return "";
-#endif
+  return false;
+}
+
+// Asegura una IP alcanzable para el modo web: STA si hay credenciales, o AP local
+void asegurarRedWeb() {
+  if (wifiConectado()) { ipActual = WiFi.localIP().toString(); return; }
+  if (conectarSTA(10000)) return;
+  // Fallback: AP local (web sin internet, Firebase no disponible)
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(AP_SSID, AP_PASSWORD);
+  apActivo = true;
+  ipActual = WiFi.softAPIP().toString();
+  Serial.printf("[WiFi] AP local '%s' -> http://%s\n", AP_SSID, ipActual.c_str());
 }
 
 // ---------------------------------------------------------------------------
 //  ENDPOINTS WEB
 // ---------------------------------------------------------------------------
-void handleRoot()   { server.send_P(200, "text/html", PAGINA_HTML); }
+void handleRoot() {
+  // En modo portal servimos la pagina de configuracion WiFi
+  if (portalActivo) server.send_P(200, "text/html", PAGINA_WIFI);
+  else              server.send_P(200, "text/html", PAGINA_HTML);
+}
 
 void handleEstado() {
   JsonDocument doc;
@@ -312,15 +353,78 @@ void handleMedir() {
   Serial.println(F("[WEB] Medicion desde /medir"));
 }
 
+// ---- Gestor WiFi por web ----
+void handleWifiPage() { server.send_P(200, "text/html", PAGINA_WIFI); }
+
+void handleWifiScan() {
+  int n = WiFi.scanNetworks();
+  JsonDocument doc;
+  JsonArray arr = doc.to<JsonArray>();
+  for (int i = 0; i < n && i < 20; i++) {
+    JsonObject o = arr.add<JsonObject>();
+    o["ssid"] = WiFi.SSID(i);
+    o["rssi"] = WiFi.RSSI(i);
+    o["sec"]  = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
+  }
+  String out; serializeJson(doc, out);
+  server.send(200, "application/json", out);
+  WiFi.scanDelete();
+}
+
+void handleWifiConnect() {
+  String s = server.arg("ssid");
+  String p = server.arg("pass");
+  if (s.length() == 0) { server.send(400, "application/json", "{\"ok\":false,\"msg\":\"sin ssid\"}"); return; }
+  guardarCredenciales(s, p);
+  // Conecta manteniendo el AP activo para poder responder al movil
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.begin(s.c_str(), p.c_str());
+  unsigned long t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 12000) { delay(300); }
+  bool ok = wifiConectado();
+  JsonDocument doc;
+  doc["ok"] = ok;
+  if (ok) { ipActual = WiFi.localIP().toString(); doc["ip"] = ipActual; }
+  else    { doc["msg"] = "revisa la contrasena"; }
+  String out; serializeJson(doc, out);
+  server.send(200, "application/json", out);
+  uiWifiResultado(tft, ok, ok ? ("IP " + ipActual) : String("Revisa la clave"));
+  Serial.printf("[WiFi] Conexion por portal: %s\n", ok ? "OK" : "FALLO");
+}
+
+void handleWifiStatus() {
+  JsonDocument doc;
+  doc["conectado"] = wifiConectado();
+  doc["ssid"]      = WiFi.SSID();
+  doc["ip"]        = wifiConectado() ? WiFi.localIP().toString() : "";
+  String out; serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+void registrarRutas() {
+  if (rutasRegistradas) return;
+  server.on("/",            HTTP_GET,  handleRoot);
+  server.on("/estado",      HTTP_GET,  handleEstado);
+  server.on("/medir",       HTTP_GET,  handleMedir);
+  server.on("/config",      HTTP_POST, handleConfig);
+  server.on("/wifi",        HTTP_GET,  handleWifiPage);
+  server.on("/wifiscan",    HTTP_GET,  handleWifiScan);
+  server.on("/wificonnect", HTTP_POST, handleWifiConnect);
+  server.on("/wifistatus",  HTTP_GET,  handleWifiStatus);
+  server.onNotFound([]() {
+    if (portalActivo) server.send_P(200, "text/html", PAGINA_WIFI);  // estilo captivo
+    else              server.send(404, "text/plain", "404");
+  });
+  rutasRegistradas = true;
+}
+
 void iniciarServidorWeb() {
-  server.on("/",       HTTP_GET,  handleRoot);
-  server.on("/estado", HTTP_GET,  handleEstado);
-  server.on("/medir",  HTTP_GET,  handleMedir);
-  server.on("/config", HTTP_POST, handleConfig);
-  server.onNotFound([]() { server.send(404, "text/plain", "404"); });
-  server.begin();
-  webActiva = true;
-  Serial.println(F("[WEB] Servidor iniciado."));
+  registrarRutas();
+  if (!webActiva) {
+    server.begin();
+    webActiva = true;
+    Serial.println(F("[WEB] Servidor iniciado."));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +438,8 @@ void renderActual() {
     case DIAG_RESULT: uiResultado(tft, ultimoDiag, ultimasFeat, bandas, cfgFruta, wifiActivo()); break;
     case TRAIN:       uiEntrenamiento(tft, ipActual, wifiActivo(), firebaseOn(), cfgFruta, cfgEstado); break;
     case INFO:        uiInfo(tft, wifiActivo()); break;
+    case WIFI_INFO:   uiWifiInfo(tft, wifiConectado(), WiFi.SSID(), ipActual); break;
+    case WIFI_PORTAL: uiWifiPortal(tft, AP_SETUP_SSID, AP_SETUP_URL); break;
   }
 }
 
@@ -354,7 +460,7 @@ void ejecutarDiagnostico() {
 
 void entrarEntrenamiento() {
   uiEntrenamiento(tft, "conectando...", false, false, cfgFruta, cfgEstado);
-  ipActual = iniciarWiFi();
+  asegurarRedWeb();
   iniciarServidorWeb();
 #if USAR_FIREBASE
   if (wifiConectado()) fbInicializar();
@@ -365,7 +471,29 @@ void entrarEntrenamiento() {
 
 void salirDeEntrenamiento() {
   if (webActiva) { server.stop(); webActiva = false; }
+  if (apActivo)  { WiFi.softAPdisconnect(true); apActivo = false; }  // apaga solo el AP fallback
   cambiarEstado(MENU);
+}
+
+// ---- Portal de configuracion WiFi (AP + web para el movil) ----
+void entrarPortalWiFi() {
+  portalActivo = true;
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(AP_SETUP_SSID);          // AP abierto (sin clave)
+  apActivo = true;
+  iniciarServidorWeb();
+  estado = WIFI_PORTAL;
+  uiWifiPortal(tft, AP_SETUP_SSID, AP_SETUP_URL);
+  Serial.printf("[WiFi] Portal '%s' -> %s\n", AP_SETUP_SSID, AP_SETUP_URL);
+}
+
+void salirPortalWiFi() {
+  portalActivo = false;
+  WiFi.softAPdisconnect(true);         // apaga el AP; si conecto por STA, esa queda
+  apActivo = false;
+  if (webActiva) { server.stop(); webActiva = false; }
+  estado = WIFI_INFO;
+  uiWifiInfo(tft, wifiConectado(), WiFi.SSID(), ipActual);
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +514,7 @@ void manejarBotones() {
       if (b2) {
         if      (menuSel == 0) cambiarEstado(DIAG_PROMPT);
         else if (menuSel == 1) entrarEntrenamiento();
+        else if (menuSel == 2) cambiarEstado(WIFI_INFO);
         else                   cambiarEstado(INFO);
       }
       break;
@@ -419,6 +548,15 @@ void manejarBotones() {
     case INFO:
       if (b1) cambiarEstado(MENU);
       break;
+
+    case WIFI_INFO:
+      if (b1) cambiarEstado(MENU);
+      if (b2) entrarPortalWiFi();
+      break;
+
+    case WIFI_PORTAL:
+      if (b1) salirPortalWiFi();
+      break;
   }
 }
 
@@ -435,10 +573,15 @@ void manejarSerial() {
     case '1': cambiarEstado(DIAG_PROMPT); break;
     case '2': entrarEntrenamiento(); break;
     case 'i': cambiarEstado(INFO); break;
-    case 'x': if (estado == TRAIN) salirDeEntrenamiento(); else cambiarEstado(MENU); break;
+    case 'w': cambiarEstado(WIFI_INFO); break;
+    case 'x':
+      if      (estado == TRAIN)       salirDeEntrenamiento();
+      else if (estado == WIFI_PORTAL) salirPortalWiFi();
+      else                            cambiarEstado(MENU);
+      break;
     case 'm': if (estado == DIAG_PROMPT || estado == DIAG_RESULT) ejecutarDiagnostico(); break;
     case 'h':
-      Serial.println(F("1=Diag 2=Train i=Info x=Menu m=Medir M=JSON-serial"));
+      Serial.println(F("1=Diag 2=Train w=WiFi i=Info x=Menu m=Medir M=JSON-serial"));
       break;
     default: break;
   }
@@ -510,6 +653,14 @@ void setup() {
     delay(1500);
   }
 
+  // WiFi: intenta reconectar con las credenciales guardadas (no bloquea el menu)
+  cargarCredenciales();
+  if (wifiSSID.length()) {
+    tft.fillScreen(C_BLACK);
+    txtCentro(tft, "Conectando WiFi...", SCR_W / 2, SCR_H / 2, 2, C_ALERT);
+    conectarSTA(8000);
+  }
+
   // Splash inicial
   splashT = millis();
   cambiarEstado(SPLASH);
@@ -523,10 +674,9 @@ void loop() {
   manejarBotones();
   manejarSerial();
 
-  if (estado == TRAIN) {
-    if (webActiva) server.handleClient();
+  if (webActiva) server.handleClient();   // web activa en TRAIN y en el portal WiFi
+
 #if USAR_FIREBASE
-    if (wifiConectado()) fbPoll();
+  if (estado == TRAIN && wifiConectado()) fbPoll();
 #endif
-  }
 }

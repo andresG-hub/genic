@@ -1,11 +1,9 @@
 // ============================================================================
 //  pantalla.h  -  Interfaz HMI para LilyGO T-Display (ST7789 240x135)
-//  Usa Adafruit_GFX + Adafruit_ST7789. Los pines se definen en el sketch
-//  (config.h) y se pasan al constructor: NO hay que editar la libreria.
+//  Adafruit_GFX + Adafruit_ST7789. Pines en el sketch (config.h), sin editar
+//  archivos de libreria.
 // ----------------------------------------------------------------------------
-//  Librerias necesarias (Library Manager):
-//    - "Adafruit GFX Library"
-//    - "Adafruit ST7735 and ST7789 Library"
+//  Librerias: "Adafruit GFX Library" + "Adafruit ST7735 and ST7789 Library"
 // ============================================================================
 #ifndef PANTALLA_H
 #define PANTALLA_H
@@ -13,6 +11,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 #include "clasificador.h"
+#include "logo_genic.h"
 
 // Resolucion en horizontal (rotation 1/3)
 #define SCR_W 240
@@ -32,6 +31,9 @@
 #define C_DGREY    0x2124   // gris muy oscuro (footer)
 #define C_ITEM     0x18E3   // gris item de menu no seleccionado
 #define C_DARKGREY 0x7BEF
+
+// Color de acento de marca (#ffc95c) para contrastes y alertas
+#define C_ALERT    0xFE4B
 
 // Color por diagnostico
 inline uint16_t colorDiag(Diagnostico d) {
@@ -83,13 +85,13 @@ inline void txtDer(Adafruit_ST7789& tft, const String& s, int16_t xr, int16_t cy
 inline void uiHeader(Adafruit_ST7789& tft, const String& titulo, bool wifiOk) {
   tft.fillRect(0, 0, SCR_W, 20, C_NAVY);
   txtIzq(tft, titulo, 6, 10, 2, C_WHITE);
-  tft.fillCircle(SCR_W - 12, 10, 5, wifiOk ? C_GREEN : C_RED);
+  tft.fillCircle(SCR_W - 12, 10, 5, wifiOk ? C_GREEN : C_ALERT);
 }
 
 inline void uiFooter(Adafruit_ST7789& tft, const String& b1, const String& b2) {
   tft.fillRect(0, SCR_H - 16, SCR_W, 16, C_DGREY);
-  if (b1.length()) txtIzq(tft, "B1 " + b1, 4, SCR_H - 8, 1, C_WHITE);
-  if (b2.length()) txtDer(tft, b2 + " B2", SCR_W - 4, SCR_H - 8, 1, C_WHITE);
+  if (b1.length()) txtIzq(tft, "B1 " + b1, 4, SCR_H - 8, 1, C_ALERT);
+  if (b2.length()) txtDer(tft, b2 + " B2", SCR_W - 4, SCR_H - 8, 1, C_ALERT);
 }
 
 // Grafico de barras de las 18 bandas (color por grupo UV/VIS/NIR)
@@ -110,25 +112,26 @@ inline void uiEspectro(Adafruit_ST7789& tft, const float* b, int x, int y, int w
 // ---------------------------------------------------------------------------
 //  Pantallas completas
 // ---------------------------------------------------------------------------
+// Splash: dibuja el logo GENIC a pantalla completa (240x135)
 inline void uiSplash(Adafruit_ST7789& tft) {
-  tft.fillScreen(C_BLACK);
-  txtCentro(tft, "GENIC", SCR_W / 2, 40, 3, C_GREEN);
-  txtCentro(tft, "Diagnostico espectral", SCR_W / 2, 72, 1, C_WHITE);
-  txtCentro(tft, "de frutas", SCR_W / 2, 88, 1, C_WHITE);
+  tft.drawRGBBitmap(0, 0, LOGO_GENIC, LOGO_W, LOGO_H);
 }
 
-static const char* MENU_ITEMS[] = { "Diagnostico", "Entrenamiento", "Info" };
-static const int    MENU_N      = 3;
+static const char* MENU_ITEMS[] = { "Diagnostico", "Entrenamiento", "WiFi", "Info" };
+static const int    MENU_N      = 4;
 
 inline void uiMenu(Adafruit_ST7789& tft, int sel, bool wifiOk) {
   tft.fillScreen(C_BLACK);
   uiHeader(tft, "Menu principal", wifiOk);
-  int y = 28;
+  const int top = 24;
+  const int footerTop = SCR_H - 16;
+  const int step = (footerTop - top) / MENU_N;   // reparte el espacio
+  const int boxH = step - 3;
   for (int i = 0; i < MENU_N; i++) {
+    int y = top + i * step;
     bool s = (i == sel);
-    tft.fillRoundRect(12, y, SCR_W - 24, 26, 5, s ? C_GREEN : C_ITEM);
-    txtCentro(tft, MENU_ITEMS[i], SCR_W / 2, y + 13, 2, s ? C_BLACK : C_WHITE);
-    y += 31;
+    tft.fillRoundRect(12, y, SCR_W - 24, boxH, 4, s ? C_ALERT : C_ITEM);
+    txtCentro(tft, MENU_ITEMS[i], SCR_W / 2, y + boxH / 2, 2, s ? C_BLACK : C_WHITE);
   }
   uiFooter(tft, "Mover", "Elegir");
 }
@@ -144,7 +147,7 @@ inline void uiPromptMedir(Adafruit_ST7789& tft, const String& fruta, bool wifiOk
 
 inline void uiMidiendo(Adafruit_ST7789& tft) {
   tft.fillScreen(C_BLACK);
-  txtCentro(tft, "Midiendo...", SCR_W / 2, SCR_H / 2, 3, C_YELLOW);
+  txtCentro(tft, "Midiendo...", SCR_W / 2, SCR_H / 2, 3, C_ALERT);
 }
 
 inline void uiResultado(Adafruit_ST7789& tft, Diagnostico d, const Features& f,
@@ -176,7 +179,7 @@ inline void uiEntrenamiento(Adafruit_ST7789& tft, const String& ip, bool wifiOk,
   uiHeader(tft, "Entrenamiento", wifiOk);
   int y = 32;
   txtIzq(tft, "IP: " + (ip.length() ? ip : String("--")), 8, y, 2, C_WHITE); y += 22;
-  txtIzq(tft, String("Firebase: ") + (fbOk ? "ON" : "OFF"), 8, y, 2, fbOk ? C_GREEN : C_ORANGE); y += 22;
+  txtIzq(tft, String("Firebase: ") + (fbOk ? "ON" : "OFF"), 8, y, 2, fbOk ? C_GREEN : C_ALERT); y += 22;
   txtIzq(tft, "Fruta:  " + fruta, 8, y, 2, C_CYAN);  y += 18;
   txtIzq(tft, "Estado: " + estado, 8, y, 2, C_CYAN);
   uiFooter(tft, "Salir", "Medir");
@@ -191,6 +194,45 @@ inline void uiInfo(Adafruit_ST7789& tft, bool wifiOk) {
   txtIzq(tft, "Clases: sana/botrytis/", 8, y, 1, C_WHITE);    y += 14;
   txtIzq(tft, "antracnosis/podrida", 8, y, 1, C_WHITE);       y += 14;
   txtIzq(tft, "Modo 2: web + Firebase RTDB", 8, y, 1, C_WHITE);
+  uiFooter(tft, "Volver", "");
+}
+
+// ---------------------------------------------------------------------------
+//  Pantallas del gestor WiFi
+// ---------------------------------------------------------------------------
+inline void uiWifiInfo(Adafruit_ST7789& tft, bool conectado, const String& ssid,
+                       const String& ip) {
+  tft.fillScreen(C_BLACK);
+  uiHeader(tft, "WiFi", conectado);
+  if (conectado) {
+    txtIzq(tft, "Conectado a:", 8, 34, 1, C_WHITE);
+    txtIzq(tft, ssid, 8, 52, 2, C_GREEN);
+    txtIzq(tft, "IP: " + ip, 8, 76, 2, C_CYAN);
+    txtIzq(tft, "B2 = reconfigurar red", 8, 100, 1, C_WHITE);
+  } else {
+    txtCentro(tft, "Sin conexion WiFi", SCR_W / 2, 44, 2, C_ALERT);
+    txtCentro(tft, "Pulsa B2 para", SCR_W / 2, 72, 1, C_WHITE);
+    txtCentro(tft, "configurar por movil", SCR_W / 2, 86, 1, C_WHITE);
+  }
+  uiFooter(tft, "Volver", "Configurar");
+}
+
+inline void uiWifiPortal(Adafruit_ST7789& tft, const String& apSsid, const String& url) {
+  tft.fillScreen(C_BLACK);
+  uiHeader(tft, "Configurar WiFi", false);
+  txtCentro(tft, "1) Conecta tu movil a:", SCR_W / 2, 30, 1, C_WHITE);
+  txtCentro(tft, apSsid, SCR_W / 2, 46, 2, C_ALERT);
+  txtCentro(tft, "2) Abre esta pagina:", SCR_W / 2, 68, 1, C_WHITE);
+  txtCentro(tft, url, SCR_W / 2, 84, 2, C_CYAN);
+  txtCentro(tft, "Elige tu red y clave", SCR_W / 2, 104, 1, C_WHITE);
+  uiFooter(tft, "Cancelar", "");
+}
+
+inline void uiWifiResultado(Adafruit_ST7789& tft, bool ok, const String& msg) {
+  tft.fillScreen(C_BLACK);
+  uiHeader(tft, "WiFi", ok);
+  txtCentro(tft, ok ? "Conectado!" : "Fallo", SCR_W / 2, 46, 3, ok ? C_GREEN : C_ALERT);
+  txtCentro(tft, msg, SCR_W / 2, 84, 1, C_WHITE);
   uiFooter(tft, "Volver", "");
 }
 

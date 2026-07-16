@@ -30,12 +30,16 @@ firmware_diagnostico/
   config.h                   Credenciales, pines, parámetros (EDITAR ANTES DE COMPILAR)
   clasificador.h             Modelo embebido (árbol de decisión + tabla de umbrales)
   pantalla.h                 Interfaz HMI para la pantalla TFT (Adafruit_ST7789)
-  pagina_web.h               Interfaz web embebida (SPA en PROGMEM)
+  logo_genic.h               Logo del splash (RGB565 240×135, autogenerado)
+  pagina_web.h               Web embebida + portal WiFi (SPA en PROGMEM)
 firebase/
   reglas.json                Reglas de Realtime Database
   estructura_ejemplo.json    Estructura de datos de ejemplo
 python/
   export_arbol.py            Entrena y exporta tu árbol sklearn a C++
+  generar_logo.py            Convierte assets/genicLCD.bmp -> logo_genic.h
+assets/
+  genicLCD.bmp / genic_lcd.c Fuente del logo (fuera del sketch para no compilarse)
 CONEXIONES.md                Esquema de cableado + librerías del display
 ```
 
@@ -63,18 +67,32 @@ Edita `config.h`:
 - `USAR_FIREBASE`, `FB_HOST` (ya apunta a `genic-76302`), `FB_AUTH` (déjalo `""` si tus reglas están abiertas).
 
 ### HMI — navegación por botones
-La pantalla muestra: **Splash → Menú** (Diagnóstico / Entrenamiento / Info).
+Al encender se muestra el **logo GENIC** (splash, imagen a pantalla completa) y
+luego el **Menú**: Diagnóstico / Entrenamiento / WiFi / Info.
 
-| Pantalla      | BTN1 (GPIO0)      | BTN2 (GPIO35)   |
-|---------------|-------------------|-----------------|
-| Menú          | Mover selección   | Elegir          |
-| Diagnóstico   | Volver            | **MEDIR**       |
-| Resultado     | Volver            | Medir de nuevo  |
-| Entrenamiento | Salir             | Medir local     |
+| Pantalla      | BTN1 (GPIO0)      | BTN2 (GPIO35)     |
+|---------------|-------------------|-------------------|
+| Menú          | Mover selección   | Elegir            |
+| Diagnóstico   | Volver            | **MEDIR**         |
+| Resultado     | Volver            | Medir de nuevo    |
+| Entrenamiento | Salir             | Medir local       |
+| WiFi          | Volver            | Configurar (portal) |
 
 El **Resultado** muestra el diagnóstico en color (verde/violeta/naranja/rojo)
 más un **gráfico de las 18 bandas** (UV cian, VIS verde, NIR rojo) y las métricas
-NDVI / R-G / pigmento.
+NDVI / R-G / pigmento. El color de acento de la interfaz es **`#ffc95c`**
+(selección de menú, alertas y pistas de botones).
+
+### Gestor WiFi (menú → WiFi)
+No hay que escribir credenciales en el código. Desde el menú **WiFi → Configurar**:
+1. El ESP32 crea una red abierta **`GENIC-Setup`**.
+2. Conecta tu móvil a esa red y abre **`http://192.168.4.1`**.
+3. Pulsa *Escanear*, elige tu red del desplegable, escribe la contraseña y *Conectar*.
+4. Las credenciales se guardan en memoria (**NVS**) y el equipo **se reconecta solo**
+   en cada arranque.
+
+El logo se genera desde `assets/genicLCD.bmp` con `python/generar_logo.py`
+(produce `firmware_diagnostico/logo_genic.h`, un array RGB565 240×135).
 
 ### Atajos por Serial (115200 baudios)
 `1` diagnóstico · `2` entrenamiento · `i` info · `x` menú · `m` medir ·

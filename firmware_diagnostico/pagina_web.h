@@ -48,7 +48,7 @@ const char PAGINA_HTML[] PROGMEM = R"rawliteral(
 </head>
 <body>
   <h1>&#127827; Diagnostico Espectral</h1>
-  <div class="sub">ESP32-S3 + AS7265x (18 bandas, 410-940 nm)</div>
+  <div class="sub">LilyGO T-Display + AS7265x (18 bandas, 410-940 nm)</div>
 
   <div class="card">
     <div>Estado del equipo:
@@ -136,6 +136,118 @@ async function medir(){
 }
 refrescarEstado();
 setInterval(refrescarEstado, 4000);
+</script>
+</body>
+</html>
+)rawliteral";
+
+// ============================================================================
+//  Portal de configuracion WiFi (se sirve en modo AP "GENIC-Setup")
+//  Endpoints:
+//    GET  /wifiscan    -> JSON [{ssid,rssi,sec}]
+//    POST /wificonnect -> form ssid+pass ; conecta y responde {ok, ip, msg}
+//    GET  /wifistatus  -> {conectado, ssid, ip}
+// ============================================================================
+const char PAGINA_WIFI[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GENIC - Configurar WiFi</title>
+<style>
+  :root{--bg:#0f172a;--card:#1e293b;--accent:#ffc95c;--txt:#e2e8f0;--mut:#94a3b8;}
+  *{box-sizing:border-box;font-family:system-ui,Segoe UI,Roboto,sans-serif;}
+  body{margin:0;background:var(--bg);color:var(--txt);padding:16px;}
+  h1{font-size:1.25rem;margin:0 0 2px;color:var(--accent);}
+  .sub{color:var(--mut);font-size:.85rem;margin-bottom:16px;}
+  .card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:14px;
+        box-shadow:0 4px 14px rgba(0,0,0,.3);}
+  label{display:block;font-size:.8rem;color:var(--mut);margin:10px 0 4px;}
+  select,input,button{width:100%;padding:12px;border-radius:10px;border:none;font-size:1rem;}
+  select,input{background:#0b1220;color:var(--txt);border:1px solid #334155;}
+  button{background:var(--accent);color:#3a2a00;font-weight:800;margin-top:14px;cursor:pointer;}
+  button.sec{background:#334155;color:var(--txt);font-weight:600;}
+  button:disabled{opacity:.5;cursor:not-allowed;}
+  .row{display:flex;gap:8px;align-items:center;}
+  .chk{display:flex;gap:8px;align-items:center;margin-top:8px;font-size:.85rem;color:var(--mut);}
+  .chk input{width:auto;}
+  .msg{margin-top:10px;font-size:.9rem;}
+  .ok{color:#6ee7b7;} .bad{color:#fca5a5;}
+  .bars{color:var(--accent);font-family:monospace;}
+</style>
+</head>
+<body>
+  <h1>&#128246; GENIC WiFi</h1>
+  <div class="sub">Elige tu red y escribe la contrasena</div>
+
+  <div class="card">
+    <div class="row">
+      <label style="margin:0">Redes disponibles</label>
+    </div>
+    <select id="ssid"><option value="">— pulsa Escanear —</option></select>
+    <button class="sec" id="btnScan" onclick="escanear()">&#128260; Escanear redes</button>
+
+    <label>Contrasena</label>
+    <input id="pass" type="password" placeholder="clave de la red" autocomplete="off">
+    <div class="chk">
+      <input type="checkbox" id="ver" onchange="document.getElementById('pass').type=this.checked?'text':'password'">
+      <span>Mostrar contrasena</span>
+    </div>
+
+    <button id="btnConn" onclick="conectar()">&#9989; Conectar</button>
+    <div id="msg" class="msg"></div>
+  </div>
+
+  <div class="card">
+    <label>Estado</label>
+    <div id="estado" class="msg">Consultando...</div>
+  </div>
+
+<script>
+function bars(r){ // rssi -> barras
+  if(r>=-55) return '||||'; if(r>=-65) return '|||.'; if(r>=-75) return '||..'; return '|...';
+}
+async function escanear(){
+  const b=document.getElementById('btnScan'); b.disabled=true; b.textContent='Escaneando...';
+  try{
+    const r=await fetch('/wifiscan'); const list=await r.json();
+    const sel=document.getElementById('ssid'); sel.innerHTML='';
+    if(!list.length){ sel.innerHTML='<option value="">(sin redes)</option>'; }
+    list.forEach(n=>{
+      const o=document.createElement('option'); o.value=n.ssid;
+      o.textContent=(n.sec?'\uD83D\uDD12 ':'   ')+n.ssid+'   '+bars(n.rssi);
+      sel.appendChild(o);
+    });
+  }catch(e){ document.getElementById('msg').textContent='Error al escanear'; }
+  finally{ b.disabled=false; b.textContent='\uD83D\uDD04 Escanear redes'; }
+}
+async function conectar(){
+  const ssid=document.getElementById('ssid').value;
+  const pass=document.getElementById('pass').value;
+  const m=document.getElementById('msg');
+  if(!ssid){ m.className='msg bad'; m.textContent='Elige una red primero.'; return; }
+  const b=document.getElementById('btnConn'); b.disabled=true; b.textContent='Conectando...';
+  m.className='msg'; m.textContent='Conectando a '+ssid+'...';
+  try{
+    const body='ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent(pass);
+    const r=await fetch('/wificonnect',{method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
+    const j=await r.json();
+    if(j.ok){ m.className='msg ok'; m.textContent='Conectado. IP: '+j.ip+' — ya puedes cerrar esta pagina.'; }
+    else   { m.className='msg bad'; m.textContent='No se pudo conectar: '+(j.msg||'revisa la clave'); }
+  }catch(e){ m.className='msg bad'; m.textContent='Error de conexion.'; }
+  finally{ b.disabled=false; b.textContent='\u2705 Conectar'; refrescar(); }
+}
+async function refrescar(){
+  try{
+    const r=await fetch('/wifistatus'); const j=await r.json();
+    const e=document.getElementById('estado');
+    if(j.conectado){ e.className='msg ok'; e.textContent='Conectado a '+j.ssid+' (IP '+j.ip+')'; }
+    else { e.className='msg bad'; e.textContent='No conectado'; }
+  }catch(e){}
+}
+refrescar(); escanear();
 </script>
 </body>
 </html>

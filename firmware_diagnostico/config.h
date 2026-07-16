@@ -50,9 +50,15 @@
 #define STA_SSID           "TU_SSID"
 #define STA_PASSWORD       "TU_PASSWORD"
 
-// Credenciales del Access Point que crea el ESP32 (modo AP)
+// Credenciales del Access Point que crea el ESP32 (modo AP, web local offline)
 #define AP_SSID            "DiagnosticoFrutas"
 #define AP_PASSWORD        "espectral2024"     // minimo 8 caracteres
+
+// Gestor WiFi (portal de configuracion): el ESP32 crea esta red ABIERTA para
+// que conectes el movil, elijas tu red y escribas la clave. Las credenciales
+// se guardan en memoria NVS y se reconecta solo al arrancar.
+#define AP_SETUP_SSID      "GENIC-Setup"       // AP abierto (sin clave)
+#define AP_SETUP_URL       "http://192.168.4.1"
 
 // Puerto del servidor web embebido
 #define WEB_PORT           80
