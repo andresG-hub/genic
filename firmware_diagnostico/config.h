@@ -12,8 +12,8 @@
 //  1) HARDWARE / PINES  (LilyGO T-Display)
 // ---------------------------------------------------------------------------
 //  El display ST7789 usa SPI en pines FIJOS de la placa. Esos pines se
-//  configuran EN LA LIBRERIA TFT_eSPI (ver CONEXIONES.md), no aqui:
-//     TFT_MOSI=19  TFT_SCLK=18  TFT_CS=5  TFT_DC=16  TFT_RST=23  TFT_BL=4
+//  se definen AQUI y se pasan al constructor de Adafruit_ST7789 (no hay que
+//  editar ningun archivo de libreria).
 //
 //  El AS7265x se conecta por I2C en los pines LIBRES 21/22.
 //  (En el ESP32 clasico NO uses 8/9: estan unidos a la memoria flash.)
@@ -27,8 +27,14 @@
 #define PIN_BTN1           0
 #define PIN_BTN2           35
 
-// Retroiluminacion del TFT (la controla TFT_eSPI via TFT_BL=4)
-#define PIN_TFT_BL         4
+// Pines FIJOS del display ST7789 de la T-Display (bus SPI).
+// Se remapean con SPI.begin() y se pasan al constructor Adafruit_ST7789.
+#define PIN_TFT_MOSI       19
+#define PIN_TFT_SCLK       18
+#define PIN_TFT_CS         5
+#define PIN_TFT_DC         16
+#define PIN_TFT_RST        23
+#define PIN_TFT_BL         4    // retroiluminacion
 
 // ---------------------------------------------------------------------------
 //  2) WIFI

@@ -15,8 +15,9 @@
 //  LIBRERIAS (Library Manager):
 //    - SparkFun AS7265X Arduino Library
 //    - ArduinoJson (>= 7.x)
-//    - TFT_eSPI  (configurada para T-Display: ver CONEXIONES.md)
-//  Placa: "ESP32 Dev Module" (o "TTGO LoRa32-OLED" NO; usar ESP32 Dev Module)
+//    - Adafruit GFX Library
+//    - Adafruit ST7735 and ST7789 Library
+//  Placa: "ESP32 Dev Module" (ver CONEXIONES.md)
 // ============================================================================
 
 #include <Wire.h>
@@ -26,7 +27,9 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <SparkFun_AS7265X.h>
-#include <TFT_eSPI.h>
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7789.h>
 
 // Diagnostico de arranque: motivo de reinicio + desactivar brownout
 #include "esp_system.h"
@@ -42,7 +45,7 @@
 //  Objetos globales
 // ---------------------------------------------------------------------------
 AS7265X   as7265x;
-TFT_eSPI  tft = TFT_eSPI();
+Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST);
 WebServer server(WEB_PORT);
 
 // Estados de la HMI
@@ -483,11 +486,12 @@ void setup() {
   pinMode(PIN_TFT_BL, OUTPUT);
   digitalWrite(PIN_TFT_BL, HIGH);
 
-  // Pantalla
+  // Pantalla (Adafruit_ST7789, pines remapeados por SPI.begin)
   Serial.println(F("[BOOT] Iniciando TFT..."));
-  tft.init();
-  tft.setRotation(1);          // horizontal 240x135
-  tft.fillScreen(TFT_BLACK);
+  SPI.begin(PIN_TFT_SCLK, -1, PIN_TFT_MOSI, PIN_TFT_CS);
+  tft.init(135, 240);          // panel fisico 135x240 (offsets del 1.14")
+  tft.setRotation(1);          // horizontal 240x135 (si sale girado usa 3)
+  tft.fillScreen(C_BLACK);
   Serial.println(F("[BOOT] TFT OK."));
 
   // Botones
@@ -500,11 +504,9 @@ void setup() {
   sensorOk = iniciarSensor();
   Serial.printf("[BOOT] Sensor: %s\n", sensorOk ? "OK" : "NO detectado (se continua)");
   if (!sensorOk) {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(TFT_RED, TFT_BLACK);
-    tft.drawString("Sensor AS7265x", SCR_W / 2, 55, 2);
-    tft.drawString("no detectado", SCR_W / 2, 75, 2);
+    tft.fillScreen(C_BLACK);
+    txtCentro(tft, "Sensor AS7265x", SCR_W / 2, 55, 2, C_RED);
+    txtCentro(tft, "no detectado", SCR_W / 2, 80, 2, C_RED);
     delay(1500);
   }
 

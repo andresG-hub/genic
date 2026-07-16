@@ -18,7 +18,7 @@ GENIC de diagnóstico espectral.
 |               | GND          | GND            | común |
 | **Botón 1**   | navegar/volver | 0            | pull-up interno |
 | **Botón 2**   | medir/elegir | 35             | input-only (pull-up en placa) |
-| **TFT** (fijo)| MOSI/SCLK/CS/DC/RST/BL | 19/18/5/16/23/4 | los gestiona TFT_eSPI |
+| **TFT** (fijo)| MOSI/SCLK/CS/DC/RST/BL | 19/18/5/16/23/4 | definidos en config.h |
 
 > ⚠️ En el ESP32 clásico **no uses GPIO 8/9** para I2C: están conectados a la
 > memoria flash. Por eso el sensor va en 21/22 (no en 8/9 como en el ESP32-S3).
@@ -47,47 +47,40 @@ GENIC de diagnóstico espectral.
   las masas (GND común).
 - Si usas cables Qwiic/JST-SH, respeta el orden GND/3V3/SDA/SCL del conector.
 
-## Configuración de TFT_eSPI (¡imprescindible!)
+## Librería del display (Adafruit — sin editar archivos)
 
-La librería **TFT_eSPI** define los pines del display en tiempo de compilación.
-Hay que decirle que use el perfil de la T-Display.
+El display usa **Adafruit_ST7789 + Adafruit_GFX**. Los pines se definen en
+`config.h` y se pasan al constructor, así que **NO hay que editar ningún archivo
+de librería** (ese era el paso frágil de TFT_eSPI que provocaba cuelgues).
 
 ### Arduino IDE
-1. Instala **TFT_eSPI** (Bodmer) desde el Library Manager.
-2. Abre el archivo `User_Setup_Select.h` dentro de la carpeta de la librería
-   (normalmente `Documentos/Arduino/libraries/TFT_eSPI/`).
-3. **Comenta** la línea del setup por defecto y **descomenta** la de la T-Display:
-   ```cpp
-   // #include <User_Setup.h>                           // <-- comentar esta
-   #include <User_Setups/Setup25_TTGO_T_Display.h>      // <-- descomentar esta
-   ```
-4. Selecciona la placa **"ESP32 Dev Module"** y compila.
+1. Instala desde el Library Manager:
+   - **"Adafruit GFX Library"**
+   - **"Adafruit ST7735 and ST7789 Library"** (arrastra también sus dependencias
+     como *Adafruit BusIO* si las pide).
+2. Selecciona la placa **"ESP32 Dev Module"** y compila. Listo.
+
+El firmware ya hace el remapeo de SPI y la inicialización:
+```cpp
+SPI.begin(PIN_TFT_SCLK, -1, PIN_TFT_MOSI, PIN_TFT_CS);  // 18, -, 19, 5
+Adafruit_ST7789 tft(&SPI, PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST); // 5, 16, 23
+tft.init(135, 240);   // panel del 1.14" (maneja los offsets)
+tft.setRotation(1);   // 240x135 apaisado; si sale girado/espejado usa 3
+```
+
+> Si la imagen aparece **desplazada** unos píxeles o **girada**, cambia
+> `tft.setRotation(1)` por `3` en `setup()`. Los offsets del panel 135×240 los
+> resuelve `tft.init(135, 240)`.
 
 ### PlatformIO (alternativa)
-En `platformio.ini`:
 ```ini
 [env:ttgo-t-display]
 platform = espressif32
 board = esp32dev
 framework = arduino
-build_flags =
-  -DUSER_SETUP_LOADED=1
-  -DST7789_DRIVER=1
-  -DTFT_WIDTH=135
-  -DTFT_HEIGHT=240
-  -DTFT_MOSI=19
-  -DTFT_SCLK=18
-  -DTFT_CS=5
-  -DTFT_DC=16
-  -DTFT_RST=23
-  -DTFT_BL=4
-  -DTFT_BACKLIGHT_ON=1
-  -DLOAD_GLCD=1
-  -DLOAD_FONT2=1
-  -DLOAD_FONT4=1
-  -DSPI_FREQUENCY=40000000
 lib_deps =
-  bodmer/TFT_eSPI
+  adafruit/Adafruit GFX Library
+  adafruit/Adafruit ST7735 and ST7789 Library
   bblanchon/ArduinoJson
   sparkfun/SparkFun AS7265X Arduino Library
 ```

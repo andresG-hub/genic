@@ -29,14 +29,14 @@ firmware_diagnostico/
   firmware_diagnostico.ino   Firmware principal (HMI, modos, WebServer, Firebase)
   config.h                   Credenciales, pines, parámetros (EDITAR ANTES DE COMPILAR)
   clasificador.h             Modelo embebido (árbol de decisión + tabla de umbrales)
-  pantalla.h                 Interfaz HMI para la pantalla TFT (TFT_eSPI)
+  pantalla.h                 Interfaz HMI para la pantalla TFT (Adafruit_ST7789)
   pagina_web.h               Interfaz web embebida (SPA en PROGMEM)
 firebase/
   reglas.json                Reglas de Realtime Database
   estructura_ejemplo.json    Estructura de datos de ejemplo
 python/
   export_arbol.py            Entrena y exporta tu árbol sklearn a C++
-CONEXIONES.md                Esquema de cableado + configuración de TFT_eSPI
+CONEXIONES.md                Esquema de cableado + librerías del display
 ```
 
 ---
@@ -46,14 +46,15 @@ CONEXIONES.md                Esquema de cableado + configuración de TFT_eSPI
 ### Librerías necesarias (Arduino Library Manager)
 - **SparkFun AS7265X Arduino Library**
 - **ArduinoJson** (≥ 7.x)
-- **TFT_eSPI** (Bodmer) — configurada para la T-Display (ver [CONEXIONES.md](CONEXIONES.md))
+- **Adafruit GFX Library**
+- **Adafruit ST7735 and ST7789 Library**
 
 Placa: **ESP32 Dev Module**. Sensor por I2C en **SDA=21 / SCL=22**. La pantalla
 ST7789 y los botones (GPIO 0 y 35) son de la propia placa.
 
-> ⚠️ **Paso obligatorio:** activa el perfil de la T-Display en TFT_eSPI
-> (`Setup25_TTGO_T_Display`). Si no lo haces, la pantalla se queda en blanco.
-> Instrucciones en [CONEXIONES.md](CONEXIONES.md).
+> ✅ Los pines del display están en `config.h` y se pasan al constructor de
+> Adafruit_ST7789: **no hay que editar archivos de librería**. Detalles en
+> [CONEXIONES.md](CONEXIONES.md).
 
 ### Antes de compilar
 Edita `config.h`:
