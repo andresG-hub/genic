@@ -228,6 +228,23 @@ inline void uiWifiPortal(Adafruit_ST7789& tft, const String& apSsid, const Strin
   uiFooter(tft, "Cancelar", "");
 }
 
+// ---------------------------------------------------------------------------
+//  Selector generico (spinner) para elegir fruta / estado
+//  Muestra la opcion anterior (tenue), la actual (resaltada) y la siguiente.
+// ---------------------------------------------------------------------------
+inline void uiSelector(Adafruit_ST7789& tft, const String& titulo,
+                       const String& prevN, const String& curN, const String& nextN,
+                       const String& pos, bool wifiOk) {
+  tft.fillScreen(C_BLACK);
+  uiHeader(tft, titulo, wifiOk);
+  txtCentro(tft, prevN, SCR_W / 2, 40, 1, C_DARKGREY);
+  tft.fillRoundRect(16, 54, SCR_W - 32, 28, 6, C_ALERT);
+  txtCentro(tft, curN, SCR_W / 2, 68, 2, C_BLACK);
+  txtCentro(tft, nextN, SCR_W / 2, 96, 1, C_DARKGREY);
+  txtCentro(tft, pos, SCR_W / 2, 110, 1, C_WHITE);
+  uiFooter(tft, "Siguiente", "Elegir");
+}
+
 inline void uiWifiResultado(Adafruit_ST7789& tft, bool ok, const String& msg) {
   tft.fillScreen(C_BLACK);
   uiHeader(tft, "WiFi", ok);

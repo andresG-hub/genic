@@ -29,12 +29,15 @@ firmware_diagnostico/
   firmware_diagnostico.ino   Firmware principal (HMI, modos, WebServer, Firebase)
   config.h                   Credenciales, pines, parámetros (EDITAR ANTES DE COMPILAR)
   clasificador.h             Modelo embebido (árbol de decisión + tabla de umbrales)
+  frutas.h                   Catálogo de frutas + estados (fuente única)
   pantalla.h                 Interfaz HMI para la pantalla TFT (Adafruit_ST7789)
   logo_genic.h               Logo del splash (RGB565 240×135, autogenerado)
   pagina_web.h               Web embebida + portal WiFi (SPA en PROGMEM)
 firebase/
   reglas.json                Reglas de Realtime Database
-  estructura_ejemplo.json    Estructura de datos de ejemplo
+  estructura_ejemplo.json    Estructura de datos RTDB de ejemplo
+  firestore_estructura.json  Estructura del dataset en Firestore
+  init_firestore.py          Crea el catálogo de frutas vacío en Firestore
 python/
   export_arbol.py            Entrena y exporta tu árbol sklearn a C++
   generar_logo.py            Convierte assets/genicLCD.bmp -> logo_genic.h
@@ -83,6 +86,32 @@ más un **gráfico de las 18 bandas** (UV cian, VIS verde, NIR rojo) y las métr
 NDVI / R-G / pigmento. El color de acento de la interfaz es **`#ffc95c`**
 (selección de menú, alertas y pistas de botones).
 
+### Selección de fruta (y estado)
+Antes de medir se elige la **fruta** en un selector tipo rueda (BTN1 = siguiente,
+BTN2 = elegir; la última opción es `<< Volver`):
+- **Diagnóstico:** Menú → Diagnóstico → *elige fruta* → medir.
+- **Entrenamiento:** Menú → Entrenamiento → *elige fruta* → *elige estado*
+  (sana/botrytis/antracnosis/podrida) → capturar.
+
+El catálogo de frutas es único y está en `firmware_diagnostico/frutas.h` (mismos
+`id` que el desplegable web y que Firestore). **Frutas de exportación colombianas:**
+
+| id | Fruta | id | Fruta |
+|----|-------|----|-------|
+| `aguacate` | 🥑 Aguacate Hass | `mango` | 🥭 Mango |
+| `banano` | 🍌 Banano | `lima_tahiti` | 🍋 Lima Tahití |
+| `uchuva` | 🟠 Uchuva | `pina` | 🍍 Piña |
+| `gulupa` | 🟣 Gulupa | `papaya` | 🍈 Papaya |
+| `maracuya` | 🟡 Maracuyá | `fresa` | 🍓 Fresa |
+| `pitahaya` | 🐉 Pitahaya | `arandano` | 🫐 Arándano |
+| `granadilla` | 🟠 Granadilla | | |
+
+> **Iconos:** en la web se usa **FontAwesome** (vía CDN) para los botones de
+> acción, y **emoji** para las frutas. Motivo: FontAwesome *free* no incluye
+> iconos de frutas tropicales (son de la versión Pro), mientras que los emoji
+> se ven en todos los navegadores, en los `<option>` y también sin conexión.
+> En la pantalla TFT se muestran solo los nombres (la fuente no dibuja emoji).
+
 ### Gestor WiFi (menú → WiFi)
 No hay que escribir credenciales en el código. Desde el menú **WiFi → Configurar**:
 1. El ESP32 crea una red abierta **`GENIC-Setup`**.
@@ -95,7 +124,7 @@ El logo se genera desde `assets/genicLCD.bmp` con `python/generar_logo.py`
 (produce `firmware_diagnostico/logo_genic.h`, un array RGB565 240×135).
 
 ### Atajos por Serial (115200 baudios)
-`1` diagnóstico · `2` entrenamiento · `i` info · `x` menú · `m` medir ·
+`1` diagnóstico · `2` entrenamiento · `w` WiFi · `i` info · `x` menú · `m` medir ·
 `h` ayuda · **`M` emite el JSON por Serial — compatible con `colector_espectral.py`**.
 
 > El comando `M` sigue funcionando igual, así que tu pipeline Python → CSV no cambia.
@@ -261,10 +290,37 @@ El ESP32 corre bien un árbol único o una tabla. Para RF/SVM tienes dos caminos
   es idéntico en el CSV, en el firmware y en el script de export.
 - I2C a 100 kHz por estabilidad del AS7265x.
 
+## Firestore — catálogo de frutas (dataset)
+
+El catálogo de frutas vive en **Firestore** (proyecto `genic-76302`). Para crearlo
+vacío ejecuta el script incluido:
+
+```bash
+pip install firebase-admin
+# Descarga tu clave: Firebase Console > Config del proyecto > Cuentas de servicio
+#                    > "Generar nueva clave privada"  -> serviceAccount.json
+python firebase/init_firestore.py serviceAccount.json
+```
+
+Crea la colección **`frutas`** (un documento por fruta, sin mediciones aún) y la
+colección **`etiquetas`** (los 4 estados). Estructura en
+`firebase/firestore_estructura.json`:
+
+```
+frutas/{id}                nombre, emoji, exportacion, activa, orden, n_mediciones, creado
+frutas/{id}/mediciones/{autoId}   estado, diagnostico, t, bandas{410..940}
+etiquetas/{id}             nombre, color, orden
+```
+
+> Firestore no guarda colecciones vacías: la subcolección `mediciones` aparece
+> cuando se añade la primera. La app móvil lee `frutas` para poblar su lista.
+
+### Cómo llegan las mediciones a Firestore
+Hoy el ESP32 publica en **Realtime Database** (`/mediciones`), que es el canal en
+tiempo real. Para volcar cada medición al dataset de Firestore, lo recomendado es
+una **Cloud Function** que, al crearse `/mediciones/{id}` en RTDB, escriba en
+`frutas/{fruta}/mediciones` e incremente `n_mediciones`. Dímelo y añado la función.
+
 ## Pendiente / próximos pasos
-- **Firestore para dataset + modelos ML:** hoy el firmware publica cada medición
-  en **Realtime Database** (`/mediciones`), que encaja como canal en tiempo real.
-  Si quieres que el *dataset* y los *modelos* vivan en **Firestore** (como planteaste),
-  falta definir el esquema de colecciones. Recomendación: que una **Cloud Function**
-  copie cada nuevo `/mediciones/{id}` de RTDB a una colección de Firestore, dejando
-  al ESP32 simple. Comparte la estructura de Firestore y lo integramos.
+- **Cloud Function RTDB → Firestore** para poblar `frutas/{id}/mediciones` (arriba).
+- **Modelos ML en Firestore** y sincronización con `clasificador.h`.

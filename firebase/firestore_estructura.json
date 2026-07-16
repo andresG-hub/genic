@@ -1,0 +1,42 @@
+{
+  "_descripcion": "Estructura del dataset en Firestore (proyecto genic-76302). El catalogo de frutas se crea con firebase/init_firestore.py. RTDB sigue usandose para el canal de comandos ESP32 (ver reglas.json).",
+
+  "frutas": {
+    "aguacate": {
+      "nombre": "Aguacate Hass",
+      "emoji": "🥑",
+      "exportacion": true,
+      "activa": true,
+      "orden": 0,
+      "n_mediciones": 0,
+      "creado": "<timestamp>",
+      "mediciones (subcoleccion)": {
+        "{autoId}": {
+          "estado": "botrytis",
+          "diagnostico": "BOTRYTIS",
+          "t": "<timestamp>",
+          "bandas": { "410": 0.0, "435": 0.0, "...": 0.0, "940": 0.0 }
+        }
+      }
+    },
+    "banano": "{ ... mismos campos ... }",
+    "uchuva": "{ ... }",
+    "gulupa": "{ ... }",
+    "maracuya": "{ ... }",
+    "pitahaya": "{ ... }",
+    "granadilla": "{ ... }",
+    "mango": "{ ... }",
+    "lima_tahiti": "{ ... }",
+    "pina": "{ ... }",
+    "papaya": "{ ... }",
+    "fresa": "{ ... }",
+    "arandano": "{ ... }"
+  },
+
+  "etiquetas": {
+    "sana":        { "nombre": "Sana",        "color": "#22c55e", "orden": 0 },
+    "botrytis":    { "nombre": "Botrytis",    "color": "#a855f7", "orden": 1 },
+    "antracnosis": { "nombre": "Antracnosis", "color": "#f59e0b", "orden": 2 },
+    "podrida":     { "nombre": "Podrida",     "color": "#ef4444", "orden": 3 }
+  }
+}

@@ -39,6 +39,7 @@
 
 #include "config.h"
 #include "clasificador.h"
+#include "frutas.h"
 #include "pantalla.h"
 #include "pagina_web.h"
 
@@ -50,8 +51,15 @@ Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST)
 WebServer server(WEB_PORT);
 
 // Estados de la HMI
-enum Estado { SPLASH, MENU, DIAG_PROMPT, DIAG_RESULT, TRAIN, INFO, WIFI_INFO, WIFI_PORTAL };
+enum Estado { SPLASH, MENU, SEL_FRUTA, SEL_ESTADO, DIAG_PROMPT, DIAG_RESULT,
+              TRAIN, INFO, WIFI_INFO, WIFI_PORTAL };
 Estado estado = SPLASH;
+
+// Selector de fruta/estado
+enum PickerModo { PM_DIAG, PM_TRAIN };
+PickerModo pickerModo   = PM_DIAG;
+int        selFrutaIdx  = 0;   // 0..NUM_FRUTAS  (NUM_FRUTAS = opcion "Volver")
+int        selEstadoIdx = 0;   // 0..NUM_ESTADOS (NUM_ESTADOS = opcion "Volver")
 
 int    menuSel   = 0;
 bool   sensorOk  = false;
@@ -430,10 +438,34 @@ void iniciarServidorWeb() {
 // ---------------------------------------------------------------------------
 //  RENDER SEGUN ESTADO
 // ---------------------------------------------------------------------------
+// Nombre a mostrar en cada "ranura" del selector (la ultima es "Volver")
+String nombreFrutaSlot(int i)  { return (i < NUM_FRUTAS)  ? String(FRUTAS[i].nombre)      : String("<< Volver"); }
+String nombreEstadoSlot(int i) { return (i < NUM_ESTADOS) ? String(ESTADOS_OPC[i].nombre) : String("<< Volver"); }
+
+void renderSelectorFruta() {
+  int total = NUM_FRUTAS + 1;
+  int prev = (selFrutaIdx - 1 + total) % total;
+  int next = (selFrutaIdx + 1) % total;
+  char pos[12]; snprintf(pos, sizeof(pos), "%d/%d", selFrutaIdx + 1, total);
+  uiSelector(tft, "Elige fruta", nombreFrutaSlot(prev), nombreFrutaSlot(selFrutaIdx),
+             nombreFrutaSlot(next), pos, wifiActivo());
+}
+
+void renderSelectorEstado() {
+  int total = NUM_ESTADOS + 1;
+  int prev = (selEstadoIdx - 1 + total) % total;
+  int next = (selEstadoIdx + 1) % total;
+  char pos[12]; snprintf(pos, sizeof(pos), "%d/%d", selEstadoIdx + 1, total);
+  uiSelector(tft, "Elige estado", nombreEstadoSlot(prev), nombreEstadoSlot(selEstadoIdx),
+             nombreEstadoSlot(next), pos, wifiActivo());
+}
+
 void renderActual() {
   switch (estado) {
     case SPLASH:      uiSplash(tft); break;
     case MENU:        uiMenu(tft, menuSel, wifiActivo()); break;
+    case SEL_FRUTA:   renderSelectorFruta(); break;
+    case SEL_ESTADO:  renderSelectorEstado(); break;
     case DIAG_PROMPT: uiPromptMedir(tft, cfgFruta, wifiActivo()); break;
     case DIAG_RESULT: uiResultado(tft, ultimoDiag, ultimasFeat, bandas, cfgFruta, wifiActivo()); break;
     case TRAIN:       uiEntrenamiento(tft, ipActual, wifiActivo(), firebaseOn(), cfgFruta, cfgEstado); break;
@@ -512,10 +544,30 @@ void manejarBotones() {
     case MENU:
       if (b1) { menuSel = (menuSel + 1) % MENU_N; renderActual(); }
       if (b2) {
-        if      (menuSel == 0) cambiarEstado(DIAG_PROMPT);
-        else if (menuSel == 1) entrarEntrenamiento();
+        if      (menuSel == 0) { pickerModo = PM_DIAG;  selFrutaIdx = 0; cambiarEstado(SEL_FRUTA); }
+        else if (menuSel == 1) { pickerModo = PM_TRAIN; selFrutaIdx = 0; cambiarEstado(SEL_FRUTA); }
         else if (menuSel == 2) cambiarEstado(WIFI_INFO);
         else                   cambiarEstado(INFO);
+      }
+      break;
+
+    case SEL_FRUTA:
+      if (b1) { selFrutaIdx = (selFrutaIdx + 1) % (NUM_FRUTAS + 1); renderActual(); }
+      if (b2) {
+        if (selFrutaIdx == NUM_FRUTAS) { cambiarEstado(MENU); }          // "Volver"
+        else {
+          cfgFruta = FRUTAS[selFrutaIdx].id;
+          if (pickerModo == PM_DIAG) cambiarEstado(DIAG_PROMPT);
+          else { selEstadoIdx = 0; cambiarEstado(SEL_ESTADO); }
+        }
+      }
+      break;
+
+    case SEL_ESTADO:
+      if (b1) { selEstadoIdx = (selEstadoIdx + 1) % (NUM_ESTADOS + 1); renderActual(); }
+      if (b2) {
+        if (selEstadoIdx == NUM_ESTADOS) { cambiarEstado(SEL_FRUTA); }   // "Volver" a fruta
+        else { cfgEstado = ESTADOS_OPC[selEstadoIdx].id; entrarEntrenamiento(); }
       }
       break;
 
@@ -570,8 +622,8 @@ void manejarSerial() {
 
   if (c == 'M') { medirYEnviarSerial(); return; }   // colector Python
   switch (c) {
-    case '1': cambiarEstado(DIAG_PROMPT); break;
-    case '2': entrarEntrenamiento(); break;
+    case '1': pickerModo = PM_DIAG;  selFrutaIdx = 0; cambiarEstado(SEL_FRUTA); break;
+    case '2': pickerModo = PM_TRAIN; selFrutaIdx = 0; cambiarEstado(SEL_FRUTA); break;
     case 'i': cambiarEstado(INFO); break;
     case 'w': cambiarEstado(WIFI_INFO); break;
     case 'x':

@@ -19,6 +19,9 @@ const char PAGINA_HTML[] PROGMEM = R"rawliteral(
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Diagnostico Espectral de Frutas</title>
+<!-- FontAwesome (iconos de botones). Requiere internet; sin conexion se ve el texto. -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+      crossorigin="anonymous" referrerpolicy="no-referrer">
 <style>
   :root{--bg:#0f172a;--card:#1e293b;--accent:#22c55e;--txt:#e2e8f0;--mut:#94a3b8;}
   *{box-sizing:border-box;font-family:system-ui,Segoe UI,Roboto,sans-serif;}
@@ -61,13 +64,21 @@ const char PAGINA_HTML[] PROGMEM = R"rawliteral(
   <div class="card">
     <div class="row">
       <div>
-        <label>Fruta</label>
+        <label><i class="fa-solid fa-seedling"></i> Fruta</label>
         <select id="fruta">
-          <option value="fresa">Fresa</option>
-          <option value="mango">Mango</option>
-          <option value="uva">Uva</option>
-          <option value="arandano">Arandano</option>
-          <option value="otra">Otra</option>
+          <option value="aguacate">🥑 Aguacate Hass</option>
+          <option value="banano">🍌 Banano</option>
+          <option value="uchuva">🟠 Uchuva</option>
+          <option value="gulupa">🟣 Gulupa</option>
+          <option value="maracuya">🟡 Maracuyá</option>
+          <option value="pitahaya">🐉 Pitahaya</option>
+          <option value="granadilla">🟠 Granadilla</option>
+          <option value="mango">🥭 Mango</option>
+          <option value="lima_tahiti">🍋 Lima Tahití</option>
+          <option value="pina">🍍 Piña</option>
+          <option value="papaya">🍈 Papaya</option>
+          <option value="fresa">🍓 Fresa</option>
+          <option value="arandano">🫐 Arándano</option>
         </select>
       </div>
       <div>
@@ -80,8 +91,8 @@ const char PAGINA_HTML[] PROGMEM = R"rawliteral(
         </select>
       </div>
     </div>
-    <button class="sec" onclick="guardarConfig()">Guardar configuracion</button>
-    <button id="btnMedir" onclick="medir()">&#128300; MEDIR</button>
+    <button class="sec" onclick="guardarConfig()"><i class="fa-solid fa-floppy-disk"></i> Guardar configuracion</button>
+    <button id="btnMedir" onclick="medir()"><i class="fa-solid fa-flask"></i> MEDIR</button>
     <small id="msg"></small>
   </div>
 
@@ -120,7 +131,7 @@ async function guardarConfig(){
 }
 async function medir(){
   const btn=document.getElementById('btnMedir');
-  btn.disabled=true; btn.textContent='Midiendo...';
+  btn.disabled=true; btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Midiendo...';
   document.getElementById('msg').textContent='';
   try{
     const r=await fetch('/medir'); const j=await r.json();
@@ -131,7 +142,7 @@ async function medir(){
   }catch(e){
     document.getElementById('salida').textContent='Error: '+e;
   }finally{
-    btn.disabled=false; btn.textContent='\u{1F52C} MEDIR';
+    btn.disabled=false; btn.innerHTML='<i class="fa-solid fa-flask"></i> MEDIR';
   }
 }
 refrescarEstado();
