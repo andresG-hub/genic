@@ -7,49 +7,38 @@
 <style>
   :root{--bg:#0f172a;--card:#1e293b;--accent:#ffc95c;--txt:#e2e8f0;--mut:#94a3b8;}
   *{box-sizing:border-box;font-family:system-ui,Segoe UI,Roboto,sans-serif;}
-  body{margin:0;background:var(--bg);color:var(--txt);padding:20px;max-width:720px;margin:auto;}
+  body{margin:0;background:var(--bg);color:var(--txt);padding:20px;max-width:760px;margin:auto;}
   h1{color:var(--accent);font-size:1.3rem;}
   .card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:14px;}
   button{background:var(--accent);color:#3a2a00;font-weight:800;border:none;
-         padding:12px 18px;border-radius:10px;font-size:1rem;cursor:pointer;}
+         padding:12px 18px;border-radius:10px;font-size:1rem;cursor:pointer;margin-right:8px;}
+  button.sec{background:#334155;color:var(--txt);}
   button:disabled{opacity:.5;cursor:not-allowed;}
   pre{background:#0b1220;border:1px solid #334155;border-radius:10px;padding:12px;
-      max-height:340px;overflow:auto;font-size:.82rem;white-space:pre-wrap;}
+      max-height:360px;overflow:auto;font-size:.82rem;white-space:pre-wrap;}
   .ok{color:#6ee7b7;} .bad{color:#fca5a5;} .mut{color:var(--mut);font-size:.9rem;}
   code{background:#0b1220;padding:2px 6px;border-radius:6px;}
 </style>
 </head>
 <body>
-  <h1>🍓 GENIC · Inicializar catálogo en Firestore</h1>
+  <h1>&#127827; GENIC &middot; Inicializar catálogo en Firestore</h1>
   <div class="card">
     <p class="mut">Crea la colección <code>frutas</code> (13 frutas de exportación
     colombianas, vacías) y <code>etiquetas</code> (4 estados) en el proyecto
-    <b>genic-76302</b>. No necesita clave de servicio: usa el <code>firebaseConfig</code> web.</p>
-    <p class="mut">⚠️ Requiere que las <b>reglas de Firestore</b> permitan escritura
-    (modo de prueba o reglas abiertas temporalmente). Si ves <i>permission-denied</i>,
-    pon las reglas en modo prueba y reintenta.</p>
+    <b>genic-76302</b> usando la <b>API REST</b> de Firestore (funciona abriendo
+    este archivo directamente, sin instalar nada).</p>
+    <p class="mut">Requiere que las <b>reglas de Firestore</b> permitan escritura
+    (las tuyas ya están en <code>allow read, write: if true</code>).</p>
+    <button id="btnTest" class="sec" onclick="probar()">Probar conexión</button>
     <button id="btn" onclick="crear()">Crear catálogo</button>
   </div>
-  <div class="card"><pre id="log">Listo para crear el catálogo. Pulsa el botón.</pre></div>
+  <div class="card"><pre id="log">Pulsa "Probar conexión" para verificar, luego "Crear catálogo".</pre></div>
 
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, doc, setDoc, serverTimestamp }
-  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyB1r3EcCmgLDwYv19v6T-ZxbhYbABtYlW4",
-  authDomain: "genic-76302.firebaseapp.com",
-  databaseURL: "https://genic-76302-default-rtdb.firebaseio.com",
-  projectId: "genic-76302",
-  storageBucket: "genic-76302.firebasestorage.app",
-  messagingSenderId: "331511723864",
-  appId: "1:331511723864:web:0cef3b3853da733bdb572d",
-  measurementId: "G-1YZH5JF8NW"
-};
-
-const app = initializeApp(firebaseConfig);
-const db  = getFirestore(app);
+<script>
+// --- Config del proyecto genic-76302 ---
+const PROJECT_ID = "genic-76302";
+const API_KEY    = "AIzaSyB1r3EcCmgLDwYv19v6T-ZxbhYbABtYlW4";
+const BASE = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 
 // (id, nombre, emoji, es_exportacion)
 const FRUTAS = [
@@ -77,27 +66,58 @@ const ESTADOS = [
 const logEl = document.getElementById('log');
 function log(msg, cls){ logEl.innerHTML += `\n<span class="${cls||''}">${msg}</span>`; logEl.scrollTop = logEl.scrollHeight; }
 
+// Convierte un objeto JS a "fields" con tipos de Firestore
+function toFields(obj){
+  const fields = {};
+  for (const k in obj){
+    const v = obj[k];
+    if (typeof v === 'boolean')       fields[k] = { booleanValue: v };
+    else if (typeof v === 'number')   fields[k] = Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+    else                              fields[k] = { stringValue: String(v) };
+  }
+  return { fields };
+}
+
+// PATCH crea (o sobrescribe) el documento col/id
+async function setDoc(col, id, obj){
+  const url = `${BASE}/${col}/${encodeURIComponent(id)}?key=${API_KEY}`;
+  const r = await fetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(toFields(obj))
+  });
+  if (!r.ok){ const t = await r.text(); throw new Error(`HTTP ${r.status} — ${t.slice(0,180)}`); }
+  return true;
+}
+
+window.probar = async function(){
+  logEl.textContent = 'Probando conexión a Firestore...';
+  try{
+    const r = await fetch(`${BASE}/frutas?key=${API_KEY}&pageSize=1`);
+    if (r.ok) log('✅ Conexión OK. Firestore responde. Ya puedes crear el catálogo.', 'ok');
+    else      log(`⚠️ Respuesta ${r.status}: ${(await r.text()).slice(0,200)}`, 'bad');
+  }catch(e){ log('❌ No se pudo conectar: '+e.message, 'bad'); }
+};
+
 window.crear = async function(){
   const btn = document.getElementById('btn'); btn.disabled = true;
   logEl.textContent = 'Creando catálogo...';
+  const ahora = new Date().toISOString();
   try{
     for (let i=0;i<FRUTAS.length;i++){
       const [id,nombre,emoji,exp] = FRUTAS[i];
-      await setDoc(doc(db,"frutas",id), {
-        nombre, emoji, exportacion:exp, activa:true, orden:i,
-        n_mediciones:0, creado: serverTimestamp()
-      }, { merge:true });
+      await setDoc('frutas', id, { nombre, emoji, exportacion:exp, activa:true, orden:i, n_mediciones:0, creado:ahora });
       log(`  [frutas] ${emoji} ${nombre}`, 'ok');
     }
     for (let i=0;i<ESTADOS.length;i++){
       const [id,nombre,color] = ESTADOS[i];
-      await setDoc(doc(db,"etiquetas",id), { nombre, color, orden:i }, { merge:true });
+      await setDoc('etiquetas', id, { nombre, color, orden:i });
       log(`  [etiquetas] ${nombre}`, 'ok');
     }
-    log(`\n✅ Listo: ${FRUTAS.length} frutas y ${ESTADOS.length} etiquetas creadas.`, 'ok');
+    log(`\n✅ Listo: ${FRUTAS.length} frutas y ${ESTADOS.length} etiquetas creadas en Firestore.`, 'ok');
   }catch(e){
-    log(`\n❌ Error: ${e.code||''} ${e.message}`, 'bad');
-    log('Si es permission-denied, revisa las reglas de Firestore (modo prueba).', 'bad');
+    log(`\n❌ Error: ${e.message}`, 'bad');
+    log('Si el status es 403, revisa reglas/API key. Si es de red, revisa tu internet.', 'bad');
   }finally{ btn.disabled = false; }
 };
 </script>

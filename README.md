@@ -299,10 +299,11 @@ fruta, sin mediciones aún) y **`etiquetas`** (los 4 estados).
 
 **Opción A — Navegador (más fácil, sin clave de servicio):**
 1. Abre **`firebase/init_firestore.html`** en tu navegador (doble clic).
-2. Pulsa **Crear catálogo**.
-> Usa el `firebaseConfig` web. Requiere que las **reglas de Firestore** permitan
-> escritura (modo de prueba). Si sale `permission-denied`, pon Firestore en modo
-> prueba en la consola y reintenta.
+2. Pulsa **Probar conexión** (verifica que Firestore responde) y luego **Crear catálogo**.
+> Usa la **API REST** de Firestore con `fetch` (funciona abriendo el archivo como
+> `file://`, sin instalar nada ni cargar el SDK). Requiere que las **reglas de
+> Firestore** permitan escritura. Cada escritura muestra su estado; si sale `403`
+> revisa las reglas/clave, si es error de red revisa tu internet.
 
 **Opción B — Python (clave de servicio):**
 ```bash
