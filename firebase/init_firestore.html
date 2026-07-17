@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GENIC - Inicializar Firestore</title>
+<style>
+  :root{--bg:#0f172a;--card:#1e293b;--accent:#ffc95c;--txt:#e2e8f0;--mut:#94a3b8;}
+  *{box-sizing:border-box;font-family:system-ui,Segoe UI,Roboto,sans-serif;}
+  body{margin:0;background:var(--bg);color:var(--txt);padding:20px;max-width:720px;margin:auto;}
+  h1{color:var(--accent);font-size:1.3rem;}
+  .card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:14px;}
+  button{background:var(--accent);color:#3a2a00;font-weight:800;border:none;
+         padding:12px 18px;border-radius:10px;font-size:1rem;cursor:pointer;}
+  button:disabled{opacity:.5;cursor:not-allowed;}
+  pre{background:#0b1220;border:1px solid #334155;border-radius:10px;padding:12px;
+      max-height:340px;overflow:auto;font-size:.82rem;white-space:pre-wrap;}
+  .ok{color:#6ee7b7;} .bad{color:#fca5a5;} .mut{color:var(--mut);font-size:.9rem;}
+  code{background:#0b1220;padding:2px 6px;border-radius:6px;}
+</style>
+</head>
+<body>
+  <h1>🍓 GENIC · Inicializar catálogo en Firestore</h1>
+  <div class="card">
+    <p class="mut">Crea la colección <code>frutas</code> (13 frutas de exportación
+    colombianas, vacías) y <code>etiquetas</code> (4 estados) en el proyecto
+    <b>genic-76302</b>. No necesita clave de servicio: usa el <code>firebaseConfig</code> web.</p>
+    <p class="mut">⚠️ Requiere que las <b>reglas de Firestore</b> permitan escritura
+    (modo de prueba o reglas abiertas temporalmente). Si ves <i>permission-denied</i>,
+    pon las reglas en modo prueba y reintenta.</p>
+    <button id="btn" onclick="crear()">Crear catálogo</button>
+  </div>
+  <div class="card"><pre id="log">Listo para crear el catálogo. Pulsa el botón.</pre></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, doc, setDoc, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyB1r3EcCmgLDwYv19v6T-ZxbhYbABtYlW4",
+  authDomain: "genic-76302.firebaseapp.com",
+  databaseURL: "https://genic-76302-default-rtdb.firebaseio.com",
+  projectId: "genic-76302",
+  storageBucket: "genic-76302.firebasestorage.app",
+  messagingSenderId: "331511723864",
+  appId: "1:331511723864:web:0cef3b3853da733bdb572d",
+  measurementId: "G-1YZH5JF8NW"
+};
+
+const app = initializeApp(firebaseConfig);
+const db  = getFirestore(app);
+
+// (id, nombre, emoji, es_exportacion)
+const FRUTAS = [
+  ["aguacate","Aguacate Hass","🥑",true],
+  ["banano","Banano","🍌",true],
+  ["uchuva","Uchuva","🟠",true],
+  ["gulupa","Gulupa","🟣",true],
+  ["maracuya","Maracuyá","🟡",true],
+  ["pitahaya","Pitahaya","🐉",true],
+  ["granadilla","Granadilla","🟠",true],
+  ["mango","Mango","🥭",true],
+  ["lima_tahiti","Lima Tahití","🍋",true],
+  ["pina","Piña","🍍",true],
+  ["papaya","Papaya","🍈",true],
+  ["fresa","Fresa","🍓",false],
+  ["arandano","Arándano","🫐",false],
+];
+const ESTADOS = [
+  ["sana","Sana","#22c55e"],
+  ["botrytis","Botrytis","#a855f7"],
+  ["antracnosis","Antracnosis","#f59e0b"],
+  ["podrida","Podrida","#ef4444"],
+];
+
+const logEl = document.getElementById('log');
+function log(msg, cls){ logEl.innerHTML += `\n<span class="${cls||''}">${msg}</span>`; logEl.scrollTop = logEl.scrollHeight; }
+
+window.crear = async function(){
+  const btn = document.getElementById('btn'); btn.disabled = true;
+  logEl.textContent = 'Creando catálogo...';
+  try{
+    for (let i=0;i<FRUTAS.length;i++){
+      const [id,nombre,emoji,exp] = FRUTAS[i];
+      await setDoc(doc(db,"frutas",id), {
+        nombre, emoji, exportacion:exp, activa:true, orden:i,
+        n_mediciones:0, creado: serverTimestamp()
+      }, { merge:true });
+      log(`  [frutas] ${emoji} ${nombre}`, 'ok');
+    }
+    for (let i=0;i<ESTADOS.length;i++){
+      const [id,nombre,color] = ESTADOS[i];
+      await setDoc(doc(db,"etiquetas",id), { nombre, color, orden:i }, { merge:true });
+      log(`  [etiquetas] ${nombre}`, 'ok');
+    }
+    log(`\n✅ Listo: ${FRUTAS.length} frutas y ${ESTADOS.length} etiquetas creadas.`, 'ok');
+  }catch(e){
+    log(`\n❌ Error: ${e.code||''} ${e.message}`, 'bad');
+    log('Si es permission-denied, revisa las reglas de Firestore (modo prueba).', 'bad');
+  }finally{ btn.disabled = false; }
+};
+</script>
+</body>
+</html>

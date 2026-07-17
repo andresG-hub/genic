@@ -22,6 +22,7 @@ Uso:
 Nota: Firestore NO guarda colecciones vacias; la subcoleccion
 "frutas/{id}/mediciones" aparecera cuando se agregue la primera medicion.
 """
+import os
 import sys
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -53,6 +54,22 @@ ESTADOS = [
 
 def main():
     sa = sys.argv[1] if len(sys.argv) > 1 else "serviceAccount.json"
+
+    if not os.path.exists(sa):
+        print("=" * 68)
+        print(f"[ERROR] No encontre la clave de servicio: '{sa}'")
+        print("=" * 68)
+        print("Este script necesita la clave privada de Firebase. Pasos:")
+        print("  1) Firebase Console (proyecto genic-76302)")
+        print("     https://console.firebase.google.com/project/genic-76302/settings/serviceaccounts/adminsdk")
+        print("  2) Pulsa 'Generar nueva clave privada' -> descarga un .json")
+        print("  3) Guardalo en esta carpeta como 'serviceAccount.json'")
+        print("     (o pasa la ruta:  python init_firestore.py C:\\ruta\\a\\clave.json )")
+        print()
+        print("ALTERNATIVA SIN CLAVE: abre 'init_firestore.html' en el navegador")
+        print("(usa el firebaseConfig web y no requiere descargar nada).")
+        sys.exit(1)
+
     cred = credentials.Certificate(sa)
     firebase_admin.initialize_app(cred)
     db = firestore.client()

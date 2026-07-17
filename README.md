@@ -37,7 +37,8 @@ firebase/
   reglas.json                Reglas de Realtime Database
   estructura_ejemplo.json    Estructura de datos RTDB de ejemplo
   firestore_estructura.json  Estructura del dataset en Firestore
-  init_firestore.py          Crea el catálogo de frutas vacío en Firestore
+  init_firestore.py          Crea el catálogo de frutas (Python, service account)
+  init_firestore.html        Crea el catálogo de frutas (navegador, sin clave)
 python/
   export_arbol.py            Entrena y exporta tu árbol sklearn a C++
   generar_logo.py            Convierte assets/genicLCD.bmp -> logo_genic.h
@@ -292,19 +293,26 @@ El ESP32 corre bien un árbol único o una tabla. Para RF/SVM tienes dos caminos
 
 ## Firestore — catálogo de frutas (dataset)
 
-El catálogo de frutas vive en **Firestore** (proyecto `genic-76302`). Para crearlo
-vacío ejecuta el script incluido:
+El catálogo de frutas vive en **Firestore** (proyecto `genic-76302`). Tienes dos
+formas de crearlo vacío; ambas generan la colección **`frutas`** (un documento por
+fruta, sin mediciones aún) y **`etiquetas`** (los 4 estados).
 
+**Opción A — Navegador (más fácil, sin clave de servicio):**
+1. Abre **`firebase/init_firestore.html`** en tu navegador (doble clic).
+2. Pulsa **Crear catálogo**.
+> Usa el `firebaseConfig` web. Requiere que las **reglas de Firestore** permitan
+> escritura (modo de prueba). Si sale `permission-denied`, pon Firestore en modo
+> prueba en la consola y reintenta.
+
+**Opción B — Python (clave de servicio):**
 ```bash
 pip install firebase-admin
-# Descarga tu clave: Firebase Console > Config del proyecto > Cuentas de servicio
-#                    > "Generar nueva clave privada"  -> serviceAccount.json
+# Firebase Console > Config del proyecto > Cuentas de servicio
+#   > "Generar nueva clave privada"  -> guardar como serviceAccount.json
 python firebase/init_firestore.py serviceAccount.json
 ```
-
-Crea la colección **`frutas`** (un documento por fruta, sin mediciones aún) y la
-colección **`etiquetas`** (los 4 estados). Estructura en
-`firebase/firestore_estructura.json`:
+Si falta la clave, el script ahora te indica exactamente qué hacer (ya no lanza un
+traceback). Estructura en `firebase/firestore_estructura.json`:
 
 ```
 frutas/{id}                nombre, emoji, exportacion, activa, orden, n_mediciones, creado
