@@ -39,6 +39,8 @@ firebase/
   firestore_estructura.json  Estructura del dataset en Firestore
   init_firestore.py          Crea el catálogo de frutas (Python, service account)
   init_firestore.html        Crea el catálogo de frutas (navegador, sin clave)
+  importar_csv.html          Importa CSV al dataset (navegador)
+  importar_csv.py            Importa CSV al dataset (Python, bulk + n_mediciones)
 python/
   export_arbol.py            Entrena y exporta tu árbol sklearn a C++
   generar_logo.py            Convierte assets/genicLCD.bmp -> logo_genic.h
@@ -323,6 +325,28 @@ etiquetas/{id}             nombre, color, orden
 
 > Firestore no guarda colecciones vacías: la subcolección `mediciones` aparece
 > cuando se añade la primera. La app móvil lee `frutas` para poblar su lista.
+
+### Importar tus CSV previos (dataset de `colector_espectral.py`)
+Sube los CSV que ya tenías al dataset. Detecta solo las 18 bandas (410–940),
+`estado`, `id_muestra` y `timestamp`, y escribe en `frutas/{fruta}/mediciones/{id_muestra}`.
+
+**Opción A — Navegador (sin instalar):** abre **`firebase/importar_csv.html`**,
+elige la **fruta** del CSV (p. ej. `fresa`), selecciona el/los archivo(s) y pulsa
+**Importar**. Cada fila se sube como una medición (idempotente: reimportar el
+mismo `id_muestra` la actualiza, no la duplica).
+
+**Opción B — Python (bulk):**
+```bash
+pip install firebase-admin
+python firebase/importar_csv.py dataset_fresas.csv --fruta fresa --service serviceAccount.json
+# varios archivos con la fruta en una columna del CSV:
+python firebase/importar_csv.py *.csv
+```
+La versión Python además **incrementa `n_mediciones`** en cada documento de fruta.
+
+> El CSV del colector no trae columna de fruta (era de fresas), por eso eliges la
+> fruta al importar. Si tu CSV usa etiquetas distintas (ej. `sospechosa`), se
+> guardan tal cual en `estado`; luego puedes normalizarlas.
 
 ### Cómo llegan las mediciones a Firestore
 Hoy el ESP32 publica en **Realtime Database** (`/mediciones`), que es el canal en

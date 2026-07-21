@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GENIC - Importar CSV a Firestore</title>
+<style>
+  :root{--bg:#0f172a;--card:#1e293b;--accent:#ffc95c;--txt:#e2e8f0;--mut:#94a3b8;}
+  *{box-sizing:border-box;font-family:system-ui,Segoe UI,Roboto,sans-serif;}
+  body{margin:0;background:var(--bg);color:var(--txt);padding:20px;max-width:820px;margin:auto;}
+  h1{color:var(--accent);font-size:1.3rem;}
+  .card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:14px;}
+  label{display:block;font-size:.8rem;color:var(--mut);margin:10px 0 4px;}
+  input,select{width:100%;padding:10px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:var(--txt);font-size:.95rem;}
+  .row{display:flex;gap:10px;}.row>div{flex:1;}
+  button{background:var(--accent);color:#3a2a00;font-weight:800;border:none;
+         padding:12px 18px;border-radius:10px;font-size:1rem;cursor:pointer;margin-top:12px;}
+  button:disabled{opacity:.5;cursor:not-allowed;}
+  pre{background:#0b1220;border:1px solid #334155;border-radius:10px;padding:12px;
+      max-height:360px;overflow:auto;font-size:.82rem;white-space:pre-wrap;}
+  .ok{color:#6ee7b7;} .bad{color:#fca5a5;} .warn{color:var(--accent);} .mut{color:var(--mut);font-size:.9rem;}
+  code{background:#0b1220;padding:2px 6px;border-radius:6px;}
+</style>
+</head>
+<body>
+  <h1>&#128202; GENIC &middot; Importar CSV a Firestore</h1>
+  <div class="card">
+    <p class="mut">Sube tus CSV de <code>colector_espectral.py</code> al dataset
+    <code>frutas/{fruta}/mediciones</code>. Detecta solo las 18 bandas
+    (410–940 nm), <code>estado</code>, <code>id_muestra</code> y <code>timestamp</code>.</p>
+    <div class="row">
+      <div><label>Project ID</label><input id="proj" value="genic-76302"></div>
+      <div><label>Database ID</label><input id="dbid" value="(default)"></div>
+    </div>
+    <label>API key (web)</label>
+    <input id="apikey" value="AIzaSyB1r3EcCmgLDwYv19v6T-ZxbhYbABtYlW4">
+    <div class="row">
+      <div>
+        <label>Fruta de este CSV</label>
+        <select id="fruta">
+          <option value="__col__">(usar columna "fruta" del CSV si existe)</option>
+          <option value="aguacate">🥑 Aguacate Hass</option>
+          <option value="banano">🍌 Banano</option>
+          <option value="uchuva">🟠 Uchuva</option>
+          <option value="gulupa">🟣 Gulupa</option>
+          <option value="maracuya">🟡 Maracuyá</option>
+          <option value="pitahaya">🐉 Pitahaya</option>
+          <option value="granadilla">🟠 Granadilla</option>
+          <option value="mango">🥭 Mango</option>
+          <option value="lima_tahiti">🍋 Lima Tahití</option>
+          <option value="pina">🍍 Piña</option>
+          <option value="papaya">🍈 Papaya</option>
+          <option value="fresa" selected>🍓 Fresa</option>
+          <option value="arandano">🫐 Arándano</option>
+        </select>
+      </div>
+      <div>
+        <label>Archivo(s) CSV</label>
+        <input id="files" type="file" accept=".csv,text/csv" multiple>
+      </div>
+    </div>
+    <button id="btn" onclick="importar()">Importar al dataset</button>
+  </div>
+  <div class="card"><pre id="log">Elige la fruta y el/los CSV, luego pulsa Importar.</pre></div>
+
+<script>
+const NM = [410,435,460,485,510,535,560,585,610,645,680,705,730,760,810,860,900,940];
+
+function base(){
+  const p=document.getElementById('proj').value.trim();
+  const d=document.getElementById('dbid').value.trim()||"(default)";
+  return `https://firestore.googleapis.com/v1/projects/${p}/databases/${encodeURIComponent(d)}/documents`;
+}
+const apikey=()=>document.getElementById('apikey').value.trim();
+const logEl=document.getElementById('log');
+function log(m,c){ logEl.innerHTML += `\n<span class="${c||''}">${m}</span>`; logEl.scrollTop=logEl.scrollHeight; }
+
+// --- CSV ---
+function splitLine(line){
+  const out=[]; let cur='',q=false;
+  for(let i=0;i<line.length;i++){ const c=line[i];
+    if(q){ if(c==='"'){ if(line[i+1]==='"'){cur+='"';i++;} else q=false; } else cur+=c; }
+    else { if(c===','){out.push(cur);cur='';} else if(c==='"'){q=true;} else cur+=c; } }
+  out.push(cur); return out;
+}
+function parseCSV(text){
+  const lines=text.replace(/\r\n?/g,'\n').split('\n').filter(l=>l.trim().length);
+  const rows=lines.map(splitLine);
+  const header=rows.shift().map(h=>h.trim());
+  return {header,rows};
+}
+// Detecta a que banda (nm) corresponde cada columna
+function mapearColumnas(header){
+  const band={}; let idCol=-1,estadoCol=-1,tCol=-1,frutaCol=-1;
+  header.forEach((h,i)=>{
+    const hl=h.toLowerCase();
+    for(const nm of NM){ const re=new RegExp('(^|[^0-9])'+nm+'([^0-9]|$)'); if(re.test(h)){ band[nm]=i; } }
+    if(idCol<0 && /id/.test(hl)) idCol=i;
+    if(estadoCol<0 && /estado|label|clase/.test(hl)) estadoCol=i;
+    if(tCol<0 && /time|fecha|timestamp/.test(hl)) tCol=i;
+    if(frutaCol<0 && /fruta|fruit/.test(hl)) frutaCol=i;
+  });
+  return {band,idCol,estadoCol,tCol,frutaCol};
+}
+// --- Firestore REST ---
+function toValue(v){
+  if(typeof v==='boolean') return {booleanValue:v};
+  if(typeof v==='number')  return Number.isInteger(v)?{integerValue:String(v)}:{doubleValue:v};
+  if(v && typeof v==='object') return {mapValue:{fields:mapFields(v)}};
+  return {stringValue:String(v)};
+}
+function mapFields(o){ const f={}; for(const k in o) f[k]=toValue(o[k]); return f; }
+async function setDoc(path,obj){
+  const url=`${base()}/${path}?key=${apikey()}`;
+  const r=await fetch(url,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({fields:mapFields(obj)})});
+  if(!r.ok) throw new Error(`HTTP ${r.status} — ${(await r.text()).slice(0,180)}`);
+}
+function sanId(s){ return String(s).replace(/[\/#?\s]+/g,'_').slice(0,150) || ('m'+Date.now()+Math.random().toString(36).slice(2,6)); }
+
+async function importarArchivo(file){
+  const text=await file.text();
+  const {header,rows}=parseCSV(text);
+  const map=mapearColumnas(header);
+  const nBandas=Object.keys(map.band).length;
+  log(`\n📄 ${file.name}: ${rows.length} filas, ${nBandas} bandas detectadas`, 'warn');
+  if(nBandas<1){ log('  ⚠️ No detecté columnas de banda (410..940). Reviso encabezados: '+header.join(', '),'bad'); return {ok:0,err:rows.length}; }
+
+  const frutaSel=document.getElementById('fruta').value;
+  let ok=0,err=0;
+  for(let r=0;r<rows.length;r++){
+    const row=rows[r];
+    try{
+      let fruta=frutaSel;
+      if(frutaSel==='__col__') fruta=(map.frutaCol>=0?row[map.frutaCol]:'').trim().toLowerCase();
+      if(!fruta){ throw new Error('sin fruta (elige una arriba o agrega columna fruta)'); }
+
+      const bandas={};
+      for(const nm of NM){ if(nm in map.band){ const v=parseFloat(row[map.band[nm]]); if(!isNaN(v)) bandas[String(nm)]=v; } }
+
+      const idm = map.idCol>=0 ? sanId(row[map.idCol]) : ('csv_'+(r+1));
+      const doc={
+        estado: map.estadoCol>=0 ? row[map.estadoCol].trim() : '',
+        id_muestra: map.idCol>=0 ? row[map.idCol].trim() : idm,
+        timestamp: map.tCol>=0 ? row[map.tCol].trim() : '',
+        fuente: 'csv',
+        importado: new Date().toISOString(),
+        bandas: bandas
+      };
+      await setDoc(`frutas/${encodeURIComponent(fruta)}/mediciones/${encodeURIComponent(idm)}`, doc);
+      ok++;
+      if(ok%10===0) log(`  ... ${ok} subidas`, 'mut');
+    }catch(e){ err++; if(err<=5) log(`  ❌ fila ${r+1}: ${e.message}`,'bad'); }
+  }
+  log(`  ✅ ${file.name}: ${ok} subidas, ${err} errores`, ok?'ok':'bad');
+  return {ok,err};
+}
+
+window.importar=async function(){
+  const files=document.getElementById('files').files;
+  if(!files.length){ log('⚠️ Elige al menos un CSV.','bad'); return; }
+  const btn=document.getElementById('btn'); btn.disabled=true;
+  logEl.textContent='Importando...';
+  let ok=0,err=0;
+  try{
+    for(const f of files){ const r=await importarArchivo(f); ok+=r.ok; err+=r.err; }
+    log(`\n🎉 TOTAL: ${ok} mediciones subidas, ${err} errores. Revisa Firestore > frutas.`, ok?'ok':'bad');
+    log('Nota: n_mediciones del documento de fruta no se actualiza aqui (usa el script Python o una Cloud Function para contarlas).','mut');
+  }catch(e){ log('❌ '+e.message,'bad'); }
+  finally{ btn.disabled=false; }
+};
+</script>
+</body>
+</html>
